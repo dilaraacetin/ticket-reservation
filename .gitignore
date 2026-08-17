@@ -1,0 +1,8 @@
+bin/
+coverage.out
+coverage.html
+*.test
+.env
+.DS_Store
+.idea/
+.vscode/
