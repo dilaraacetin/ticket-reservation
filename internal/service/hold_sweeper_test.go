@@ -49,7 +49,13 @@ func newTestSweeper(interval time.Duration) (*HoldSweeper, *fakeClock, *Reservat
 		domain.NewSeat(testEventID, "A1", "A", 1),
 		domain.NewSeat(testEventID, "A2", "A", 2),
 	)
-	svc := NewReservationService(repo, clock, NewRandomID, DefaultHoldTTL)
+	svc := NewReservationService(Config{
+		Seats:   repo,
+		Events:  repository.NewMemoryEventRepository(testEvent()),
+		Clock:   clock,
+		NewID:   NewRandomID,
+		HoldTTL: DefaultHoldTTL,
+	})
 
 	return NewHoldSweeper(repo, clock, interval, discardLogger()), clock, svc
 }

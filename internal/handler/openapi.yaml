@@ -1,0 +1,395 @@
+openapi: 3.0.3
+
+info:
+  title: Ticket Reservation API
+  version: 0.3.0
+  description: |
+    Seat reservation with temporary holds.
+
+    A seat is claimed with a hold that expires after five minutes. Only the user
+    holding a seat may confirm or release it, and a hold that has run out frees
+    the seat immediately, whether or not the background sweeper has noticed yet.
+
+    **Identity**: there is no authentication yet. Every write endpoint reads the
+    caller from the `X-User-ID` header, which stands in for a verified identity
+    until stage 4 adds one. Click **Authorize** and type any user id to try the
+    endpoints below.
+
+servers:
+  - url: /
+    description: The server this page was loaded from
+
+security:
+  - UserID: []
+
+tags:
+  - name: events
+    description: Events and their seat maps
+  - name: holds
+    description: Claiming, confirming and releasing seats
+  - name: system
+    description: Operational endpoints
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: The service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /events:
+    get:
+      tags: [events]
+      summary: List events
+      description: Events are returned soonest first. An empty catalogue is `[]`, never `null`.
+      security: []
+      responses:
+        "200":
+          description: The events on sale
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+
+  /events/{eventID}/seats:
+    get:
+      tags: [events]
+      summary: Get the seat map of an event
+      description: |
+        Seats are ordered by row and then number. A seat whose hold has expired is
+        reported as `available` even if the sweeper has not cleaned it up yet, and
+        the identity of whoever holds a seat is never exposed here.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "200":
+          description: The seat map
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeatMap"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /events/{eventID}/seats/{seatID}/hold:
+    post:
+      tags: [holds]
+      summary: Hold a seat
+      description: |
+        Claims the seat for the caller for five minutes. Out of any number of
+        simultaneous claims on one seat, exactly one succeeds; the others get 409.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+        - $ref: "#/components/parameters/SeatID"
+      responses:
+        "201":
+          description: The seat is held
+          headers:
+            Location:
+              description: Where the new hold can be addressed
+              schema:
+                type: string
+                example: /holds/MISGMDTLRSNOFSQWK7APCS3FAZ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hold"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The seat is already held by a live hold, or already reserved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: seat_not_available
+                  message: seat is not available
+
+  /holds/{holdID}/confirm:
+    post:
+      tags: [holds]
+      summary: Confirm a hold into a reservation
+      description: |
+        Only the user holding the seat may confirm it, and only before the hold
+        runs out. Confirming clears the hold, so a retried confirm reports 404
+        rather than success; stage 5 addresses that with an idempotency key.
+      parameters:
+        - $ref: "#/components/parameters/HoldID"
+      responses:
+        "200":
+          description: The seat is reserved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The seat is not held, so there is nothing to confirm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: seat_not_held
+                  message: seat is not held
+        "410":
+          description: |
+            The hold existed but has expired. This is distinct from 409: the
+            caller was simply too late, and starting over may well succeed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: hold_expired
+                  message: hold has expired
+
+  /holds/{holdID}:
+    delete:
+      tags: [holds]
+      summary: Release a hold
+      description: Frees the seat straight away instead of waiting for the hold to expire.
+      parameters:
+        - $ref: "#/components/parameters/HoldID"
+      responses:
+        "204":
+          description: The hold is gone and the seat is available again
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    UserID:
+      type: apiKey
+      in: header
+      name: X-User-ID
+      description: |
+        The caller's user id. A placeholder for authentication: it is trusted as
+        sent, so it must never be exposed to untrusted clients as it stands.
+
+  parameters:
+    EventID:
+      name: eventID
+      in: path
+      required: true
+      description: Identifier of the event
+      schema:
+        type: string
+      example: event-1
+
+    SeatID:
+      name: seatID
+      in: path
+      required: true
+      description: Identifier of the seat within the event
+      schema:
+        type: string
+      example: A1
+
+    HoldID:
+      name: holdID
+      in: path
+      required: true
+      description: Identifier returned when the seat was held
+      schema:
+        type: string
+      example: MISGMDTLRSNOFSQWK7APCS3FAZ
+
+  responses:
+    BadRequest:
+      description: The request is missing something it needs, such as the X-User-ID header
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: user_id_required
+              message: X-User-ID header is required
+
+    Forbidden:
+      description: The hold belongs to another user
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: not_hold_owner
+              message: hold belongs to another user
+
+    NotFound:
+      description: The event, seat or hold does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: hold_not_found
+              message: hold not found
+
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    Event:
+      type: object
+      required: [id, name, venue, startsAt, hasStarted]
+      properties:
+        id:
+          type: string
+          example: event-1
+        name:
+          type: string
+          example: Radiohead
+        venue:
+          type: string
+          example: Volkswagen Arena
+        startsAt:
+          type: string
+          format: date-time
+        hasStarted:
+          type: boolean
+          description: Computed at request time from the server's clock
+          example: false
+
+    SeatStatus:
+      type: string
+      description: |
+        Where the seat is in its lifecycle. Defined once here and referenced
+        wherever a status appears, so the list cannot drift apart between
+        endpoints.
+      enum: [available, held, reserved]
+      example: available
+
+    Seat:
+      type: object
+      required: [id, row, number, status]
+      properties:
+        id:
+          type: string
+          example: A1
+        row:
+          type: string
+          example: A
+        number:
+          type: integer
+          example: 1
+        status:
+          $ref: "#/components/schemas/SeatStatus"
+
+    SeatMap:
+      type: object
+      required: [eventId, seats]
+      properties:
+        eventId:
+          type: string
+          example: event-1
+        seats:
+          type: array
+          items:
+            $ref: "#/components/schemas/Seat"
+
+    Hold:
+      type: object
+      required: [holdId, eventId, seatId, userId, expiresAt, expiresInSeconds]
+      properties:
+        holdId:
+          type: string
+          example: MISGMDTLRSNOFSQWK7APCS3FAZ
+        eventId:
+          type: string
+          example: event-1
+        seatId:
+          type: string
+          example: A1
+        userId:
+          type: string
+          example: dilara
+        expiresAt:
+          type: string
+          format: date-time
+        expiresInSeconds:
+          type: integer
+          description: |
+            Sent alongside expiresAt because the client's own clock may be wrong.
+          example: 299
+
+    Reservation:
+      type: object
+      required: [eventId, seatId, userId, status]
+      properties:
+        eventId:
+          type: string
+          example: event-1
+        seatId:
+          type: string
+          example: A1
+        userId:
+          type: string
+          example: dilara
+        status:
+          # A successful confirm always leaves the seat reserved, but the field is
+          # not narrowed to that one value: a single member enum would become a
+          # lie the moment cancellation exists.
+          $ref: "#/components/schemas/SeatStatus"
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                Stable machine readable reason. Branch on this rather than on the
+                message, which is prose and may change.
+              enum:
+                - event_not_found
+                - seat_not_found
+                - hold_not_found
+                - seat_not_available
+                - seat_not_held
+                - hold_expired
+                - not_hold_owner
+                - user_id_required
+                - hold_id_required
+                - invalid_hold_duration
+                - internal_error
+            message:
+              type: string
+              description: Human readable explanation. Never contains internal detail.
