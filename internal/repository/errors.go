@@ -4,6 +4,7 @@ import "errors"
 
 // Lookup failures of the storage layer.
 var (
-	ErrSeatNotFound = errors.New("seat not found")
-	ErrHoldNotFound = errors.New("hold not found")
+	ErrEventNotFound = errors.New("event not found")
+	ErrSeatNotFound  = errors.New("seat not found")
+	ErrHoldNotFound  = errors.New("hold not found")
 )

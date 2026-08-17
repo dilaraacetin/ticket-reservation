@@ -17,24 +17,32 @@ const DefaultHoldTTL = 5 * time.Minute
 // ReservationService is the entry point for every seat operation.
 type ReservationService struct {
 	seats   repository.SeatRepository
+	events  repository.EventRepository
 	clock   Clock
 	newID   func() string
 	holdTTL time.Duration
 }
 
-// NewReservationService wires a service to its store, clock and id source. The
-// id source is a parameter so that tests can hand out predictable hold ids.
-func NewReservationService(
-	seats repository.SeatRepository,
-	clock Clock,
-	newID func() string,
-	holdTTL time.Duration,
-) *ReservationService {
+// Config carries the service's dependencies. A struct rather than a list of
+// parameters, because two of them are a func and a Duration and passing those
+// in the wrong order would still compile.
+type Config struct {
+	Seats   repository.SeatRepository
+	Events  repository.EventRepository
+	Clock   Clock
+	NewID   func() string
+	HoldTTL time.Duration
+}
+
+// NewReservationService wires a service to its stores, clock and id source. The
+// id source is injected so that tests can hand out predictable hold ids.
+func NewReservationService(cfg Config) *ReservationService {
 	return &ReservationService{
-		seats:   seats,
-		clock:   clock,
-		newID:   newID,
-		holdTTL: holdTTL,
+		seats:   cfg.Seats,
+		events:  cfg.Events,
+		clock:   cfg.Clock,
+		newID:   cfg.NewID,
+		holdTTL: cfg.HoldTTL,
 	}
 }
 
@@ -107,7 +115,23 @@ func (s *ReservationService) Seat(ctx context.Context, eventID, seatID string) (
 	return s.seats.GetSeat(ctx, eventID, seatID)
 }
 
-// SeatMap returns every seat of an event in a stable order.
+// Events returns every event, for the listing endpoint.
+func (s *ReservationService) Events(ctx context.Context) ([]*domain.Event, error) {
+	return s.events.ListEvents(ctx)
+}
+
+// Event returns a single event.
+func (s *ReservationService) Event(ctx context.Context, eventID string) (*domain.Event, error) {
+	return s.events.GetEvent(ctx, eventID)
+}
+
+// SeatMap returns every seat of an event in a stable order. The event is looked
+// up first so that an unknown id is reported as missing instead of coming back
+// as an empty seat map.
 func (s *ReservationService) SeatMap(ctx context.Context, eventID string) ([]*domain.Seat, error) {
+	if _, err := s.events.GetEvent(ctx, eventID); err != nil {
+		return nil, err
+	}
+
 	return s.seats.ListSeats(ctx, eventID)
 }

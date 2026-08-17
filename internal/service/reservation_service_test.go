@@ -32,7 +32,24 @@ func newTestService(seats ...*domain.Seat) (*ReservationService, *fakeClock, *re
 	clock := newFakeClock(testTime())
 	repo := repository.NewMemorySeatRepository(seats...)
 
-	return NewReservationService(repo, clock, NewRandomID, DefaultHoldTTL), clock, repo
+	svc := NewReservationService(Config{
+		Seats:   repo,
+		Events:  repository.NewMemoryEventRepository(testEvent()),
+		Clock:   clock,
+		NewID:   NewRandomID,
+		HoldTTL: DefaultHoldTTL,
+	})
+
+	return svc, clock, repo
+}
+
+func testEvent() *domain.Event {
+	return &domain.Event{
+		ID:       testEventID,
+		Name:     "Test Concert",
+		Venue:    "Test Hall",
+		StartsAt: testTime().Add(24 * time.Hour),
+	}
 }
 
 func TestReservationService_HoldSeat(t *testing.T) {
@@ -234,6 +251,12 @@ func TestReservationService_Reads(t *testing.T) {
 		}
 		if got.ID != "A1" {
 			t.Errorf("seat = %q, want A1", got.ID)
+		}
+	})
+
+	t.Run("SeatMap on an unknown event returns ErrEventNotFound", func(t *testing.T) {
+		if _, err := svc.SeatMap(ctx, "no-such-event"); !errors.Is(err, repository.ErrEventNotFound) {
+			t.Errorf("SeatMap() error = %v, want %v", err, repository.ErrEventNotFound)
 		}
 	})
 
