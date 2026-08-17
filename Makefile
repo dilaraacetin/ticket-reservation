@@ -1,9 +1,12 @@
-.PHONY: run build test test-race cover vet lint tidy clean
+.PHONY: run docs build test cover cover-html vet lint tidy clean
 
 BINARY := bin/server
 
 run:
 	go run ./cmd/server
+
+docs:
+	open http://localhost:8080/docs
 
 build:
 	go build -o $(BINARY) ./cmd/server

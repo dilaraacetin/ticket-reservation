@@ -48,6 +48,8 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", h.health)
+	mux.HandleFunc("GET /docs", h.docs)
+	mux.HandleFunc("GET "+specPath, h.openAPI)
 	mux.HandleFunc("GET /events", h.listEvents)
 	mux.HandleFunc("GET /events/{eventID}/seats", h.seatMap)
 	mux.HandleFunc("POST /events/{eventID}/seats/{seatID}/hold", h.holdSeat)
