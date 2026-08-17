@@ -12,6 +12,8 @@ linters:
     rules:
       - linters: [revive]
         text: "unused-parameter"
+      - linters: [revive]
+        text: "^exported:"
 
 formatters:
   enable:
