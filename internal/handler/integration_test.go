@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"ticket-reservation/internal/auth"
 	"ticket-reservation/internal/domain"
 	"ticket-reservation/internal/repository"
 	"ticket-reservation/internal/service"
@@ -49,11 +50,24 @@ func newTestServer(t *testing.T) (*httptest.Server, *movableClock) {
 		HoldTTL: service.DefaultHoldTTL,
 	})
 
-	api := New(reservations, clock, discardLogger())
+	accounts, err := service.NewAccountService(service.AccountConfig{
+		Users:    repository.NewMemoryUserRepository(),
+		Hasher:   auth.NewPasswordHasher(auth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1}),
+		Tokens:   testTokenSigner,
+		Clock:    clock,
+		NewID:    service.NewRandomID,
+		TokenTTL: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("building the account service failed: %v", err)
+	}
+
+	api := New(reservations, accounts, clock, discardLogger())
 	srv := httptest.NewServer(Chain(api.Routes(),
 		RequestID,
 		Logging(discardLogger()),
 		Recovery(discardLogger()),
+		Authenticate(testTokenSigner, clock, discardLogger()),
 		Idempotency(repository.NewMemoryIdempotencyRepository(), clock, 24*time.Hour, discardLogger()),
 	))
 
@@ -81,8 +95,8 @@ func requestWithKey(t *testing.T, srv *httptest.Server, method, path, userID, ke
 	if err != nil {
 		t.Fatalf("building request failed: %v", err)
 	}
-	if userID != "" {
-		req.Header.Set(userIDHeader, userID)
+	if header := bearerForUser(userID); header != "" {
+		req.Header.Set(authorizationHeader, header)
 	}
 	if key != "" {
 		req.Header.Set(idempotencyKeyHeader, key)

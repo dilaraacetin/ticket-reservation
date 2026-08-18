@@ -46,8 +46,8 @@ func newTestService(seats ...*domain.Seat) (*ReservationService, *fakeClock, *re
 func testEvent() *domain.Event {
 	return &domain.Event{
 		ID:       testEventID,
-		Name:     "Test Concert",
-		Venue:    "Test Hall",
+		Name:     "Radiohead",
+		Venue:    "Volkswagen Arena",
 		StartsAt: testTime().Add(24 * time.Hour),
 	}
 }

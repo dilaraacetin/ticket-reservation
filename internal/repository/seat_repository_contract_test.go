@@ -61,7 +61,12 @@ func seededPool(t *testing.T, eventID string) *pgxpool.Pool {
 	pool := newTestPool(t)
 	resetSchema(t, pool)
 
-	event := &domain.Event{ID: eventID, Name: "Contract", Venue: "Hall", StartsAt: testTime().Add(time.Hour)}
+	event := &domain.Event{
+		ID:       eventID,
+		Name:     "Radiohead",
+		Venue:    "Volkswagen Arena",
+		StartsAt: testTime().Add(time.Hour),
+	}
 	if err := NewPostgresEventRepository(pool).InsertEvents(t.Context(), event); err != nil {
 		t.Fatalf("seeding the event failed: %v", err)
 	}

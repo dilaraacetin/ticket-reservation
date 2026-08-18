@@ -31,7 +31,7 @@ func newPostgresEvents(t *testing.T, events ...*domain.Event) EventRepository {
 }
 
 func testEvent(id, name string, startsAt time.Time) *domain.Event {
-	return &domain.Event{ID: id, Name: name, Venue: "Hall", StartsAt: startsAt}
+	return &domain.Event{ID: id, Name: name, Venue: "Volkswagen Arena", StartsAt: startsAt}
 }
 
 func TestEventRepositoryContract(t *testing.T) {
@@ -56,14 +56,14 @@ func runEventRepositoryContract(t *testing.T, newRepo eventRepositoryFactory) {
 	now := testTime()
 
 	t.Run("GetEvent returns the stored event", func(t *testing.T) {
-		repo := newRepo(t, testEvent("event-1", "Concert", now.Add(time.Hour)))
+		repo := newRepo(t, testEvent("event-1", "Radiohead", now.Add(time.Hour)))
 
 		got, err := repo.GetEvent(t.Context(), "event-1")
 		if err != nil {
 			t.Fatalf("GetEvent() error = %v", err)
 		}
-		if got.Name != "Concert" || got.Venue != "Hall" {
-			t.Errorf("event = %+v, want Concert at Hall", got)
+		if got.Name != "Radiohead" || got.Venue != "Volkswagen Arena" {
+			t.Errorf("event = %+v, want Radiohead at Volkswagen Arena", got)
 		}
 		if !got.StartsAt.Equal(now.Add(time.Hour)) {
 			t.Errorf("StartsAt = %v, want %v", got.StartsAt, now.Add(time.Hour))
@@ -79,30 +79,33 @@ func runEventRepositoryContract(t *testing.T, newRepo eventRepositoryFactory) {
 	})
 
 	t.Run("mutating a returned event does not touch the store", func(t *testing.T) {
-		repo := newRepo(t, testEvent("event-1", "Concert", now.Add(time.Hour)))
+		repo := newRepo(t, testEvent("event-1", "Radiohead", now.Add(time.Hour)))
 
 		got, err := repo.GetEvent(t.Context(), "event-1")
 		if err != nil {
 			t.Fatalf("GetEvent() error = %v", err)
 		}
 
-		got.Name = "Changed"
+		got.Name = "Coldplay"
 
 		again, err := repo.GetEvent(t.Context(), "event-1")
 		if err != nil {
 			t.Fatalf("GetEvent() error = %v", err)
 		}
-		if again.Name != "Concert" {
-			t.Errorf("stored name = %q, want Concert", again.Name)
+		if again.Name != "Radiohead" {
+			t.Errorf("stored name = %q, want Radiohead", again.Name)
 		}
 	})
 
 	t.Run("ListEvents returns them soonest first", func(t *testing.T) {
 		repo := newRepo(t,
-			testEvent("late", "Late", now.Add(3*time.Hour)),
-			testEvent("early", "Early", now.Add(time.Hour)),
-			testEvent("middle", "Middle", now.Add(2*time.Hour)),
-			testEvent("also-middle", "Also Middle", now.Add(2*time.Hour)),
+			// The ids say where each event belongs in the expected order, which is
+			// what the assertion below reads. The names are only there to look like
+			// the real thing.
+			testEvent("late", "Massive Attack", now.Add(3*time.Hour)),
+			testEvent("early", "Radiohead", now.Add(time.Hour)),
+			testEvent("middle", "Sigur Ros", now.Add(2*time.Hour)),
+			testEvent("also-middle", "Portishead", now.Add(2*time.Hour)),
 		)
 
 		events, err := repo.ListEvents(t.Context())

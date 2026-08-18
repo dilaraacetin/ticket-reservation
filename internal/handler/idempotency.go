@@ -36,7 +36,7 @@ func Idempotency(store IdempotencyStore, clock Clock, ttl time.Duration, logger 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Header.Get(idempotencyKeyHeader)
-			userID := r.Header.Get(userIDHeader)
+			userID := UserIDFromContext(r.Context())
 
 			if key == "" || userID == "" || !isRepeatable(r.Method) {
 				next.ServeHTTP(w, r)

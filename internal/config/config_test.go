@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ticket-reservation/internal/auth"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -97,6 +99,7 @@ func TestLoad_RejectsBadValues(t *testing.T) {
 		{"zero sweep interval", map[string]string{"SWEEP_INTERVAL": "0s"}, "SWEEP_INTERVAL"},
 		{"zero shutdown timeout", map[string]string{"SHUTDOWN_TIMEOUT": "0"}, "SHUTDOWN_TIMEOUT"},
 		{"unknown log level", map[string]string{"LOG_LEVEL": "chatty"}, "LOG_LEVEL"},
+		{"short auth secret", map[string]string{"AUTH_SECRET": "too-short"}, "AUTH_SECRET"},
 	}
 
 	for _, tt := range tests {
@@ -114,5 +117,19 @@ func TestLoad_RejectsBadValues(t *testing.T) {
 				t.Errorf("error %q does not mention %s", got, tt.wants)
 			}
 		})
+	}
+}
+
+// The minimum is stated in two packages so that config imports nothing. This
+// keeps the two from drifting apart.
+func TestMinAuthSecretLengthMatchesTheAuthPackage(t *testing.T) {
+	if MinAuthSecretLength != auth.MinSecretLength {
+		t.Errorf("config says %d, auth says %d", MinAuthSecretLength, auth.MinSecretLength)
+	}
+}
+
+func TestDevAuthSecretIsLongEnough(t *testing.T) {
+	if len(DevAuthSecret) < MinAuthSecretLength {
+		t.Errorf("the development secret is %d bytes, want at least %d", len(DevAuthSecret), MinAuthSecretLength)
 	}
 }

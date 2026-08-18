@@ -87,7 +87,7 @@ func (f *fakeService) ReleaseSeat(_ context.Context, holdID, userID string) erro
 
 // do runs one request against the router and returns the recorded response.
 func do(svc ReservationService, method, target string, headers map[string]string) *httptest.ResponseRecorder {
-	h := New(svc, fixedClock{now: testTime()}, discardLogger())
+	h := New(svc, &fakeAccounts{}, fixedClock{now: testTime()}, discardLogger())
 
 	req := httptest.NewRequest(method, target, nil)
 	for name, value := range headers {
@@ -95,13 +95,15 @@ func do(svc ReservationService, method, target string, headers map[string]string
 	}
 
 	rec := httptest.NewRecorder()
-	h.Routes().ServeHTTP(rec, req)
+
+	authenticated := Authenticate(testTokenSigner, fixedClock{now: testTime()}, discardLogger())(h.Routes())
+	authenticated.ServeHTTP(rec, req)
 
 	return rec
 }
 
 func withUser(userID string) map[string]string {
-	return map[string]string{userIDHeader: userID}
+	return map[string]string{authorizationHeader: bearerForUser(userID)}
 }
 
 func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
@@ -259,14 +261,14 @@ func TestHandler_HoldSeat(t *testing.T) {
 		}
 	})
 
-	t.Run("a missing user header is 400", func(t *testing.T) {
+	t.Run("an anonymous caller is 401", func(t *testing.T) {
 		rec := do(&fakeService{}, http.MethodPost, target, nil)
 
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 		}
-		if code := decode[errorBody](t, rec).Error.Code; code != "user_id_required" {
-			t.Errorf("code = %q, want user_id_required", code)
+		if code := decode[errorBody](t, rec).Error.Code; code != "unauthenticated" {
+			t.Errorf("code = %q, want unauthenticated", code)
 		}
 	})
 
@@ -341,15 +343,15 @@ func TestHandler_ConfirmReservation(t *testing.T) {
 		}
 	})
 
-	t.Run("a missing user header is 400", func(t *testing.T) {
+	t.Run("an anonymous caller is 401", func(t *testing.T) {
 		svc := &fakeService{}
 
 		rec := do(svc, http.MethodPost, target, nil)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 		}
 		if svc.gotHoldID != "" {
-			t.Error("the service was called despite the missing header")
+			t.Error("the service was called for an anonymous request")
 		}
 	})
 }
@@ -380,15 +382,15 @@ func TestHandler_ReleaseSeat(t *testing.T) {
 		}
 	})
 
-	t.Run("a missing user header is 400", func(t *testing.T) {
+	t.Run("an anonymous caller is 401", func(t *testing.T) {
 		svc := &fakeService{}
 
 		rec := do(svc, http.MethodDelete, target, nil)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 		}
 		if svc.gotHoldID != "" {
-			t.Error("the service was called despite the missing header")
+			t.Error("the service was called for an anonymous request")
 		}
 	})
 }

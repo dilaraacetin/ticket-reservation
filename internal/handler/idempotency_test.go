@@ -33,13 +33,16 @@ func (h *countingHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 func withIdempotency(t *testing.T, next http.Handler, store IdempotencyStore) http.Handler {
 	t.Helper()
 
-	return Idempotency(store, fixedClock{now: testTime()}, testKeyTTL, discardLogger())(next)
+	return Chain(next,
+		Authenticate(testTokenSigner, fixedClock{now: testTime()}, discardLogger()),
+		Idempotency(store, fixedClock{now: testTime()}, testKeyTTL, discardLogger()),
+	)
 }
 
 func newRequest(method, target, userID, key string) *http.Request {
 	r := httptest.NewRequest(method, target, nil)
-	if userID != "" {
-		r.Header.Set(userIDHeader, userID)
+	if header := bearerForUser(userID); header != "" {
+		r.Header.Set(authorizationHeader, header)
 	}
 	if key != "" {
 		r.Header.Set(idempotencyKeyHeader, key)

@@ -21,4 +21,8 @@ var (
 	ErrInvalidHoldDuration = errors.New("hold duration must be positive")
 
 	ErrUnknownSeatStatus = errors.New("unknown seat status")
+
+	ErrInvalidEmail = errors.New("the email address is not valid")
+
+	ErrWeakPassword = errors.New("the password does not meet the requirements")
 )

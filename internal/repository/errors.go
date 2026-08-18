@@ -9,4 +9,6 @@ var (
 	ErrHoldNotFound           = errors.New("hold not found")
 	ErrConcurrentUpdate       = errors.New("the seat was changed by someone else too many times")
 	ErrIdempotencyKeyNotFound = errors.New("idempotency key not found")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrEmailTaken             = errors.New("that email address is already registered")
 )

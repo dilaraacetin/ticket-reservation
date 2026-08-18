@@ -14,19 +14,20 @@ info:
     repeated request carrying the same key gets the first attempt's answer back,
     marked with `Idempotent-Replay: true`, rather than being executed twice.
 
-    **Identity**: there is no authentication yet. Every write endpoint reads the
-    caller from the `X-User-ID` header, which stands in for a verified identity
-    until stage 4 adds one. Click **Authorize** and type any user id to try the
-    endpoints below.
+    **Identity**: writing endpoints need a bearer token; reading ones do not. The
+    caller is whoever the token names, so a client can no longer act as anyone it
+    likes by asserting a header.
 
 servers:
   - url: /
     description: The server this page was loaded from
 
 security:
-  - UserID: []
+  - BearerToken: []
 
 tags:
+  - name: accounts
+    description: Registering and signing in
   - name: events
     description: Events and their seat maps
   - name: holds
@@ -47,6 +48,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+
+  /auth/register:
+    post:
+      tags: [accounts]
+      summary: Create an account
+      description: |
+        The address is stored lowered and trimmed, so signing up as Dilara@x.com
+        and signing in as dilara@x.com reach the same account.
+
+        Passwords are between 8 characters and 72 bytes. The upper bound is not
+        arbitrary: bcrypt reads only the first 72 bytes, and accepting a longer
+        password would silently ignore the rest of it.
+
+        No token comes back. Signing in is a separate call.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "201":
+          description: The account exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: The address already belongs to an account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: email_taken
+                  message: that email address is already registered
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+
+  /auth/login:
+    post:
+      tags: [accounts]
+      summary: Sign in and get a token
+      description: |
+        Returns a bearer token for the account. Send it as
+        `Authorization: Bearer <token>` on the writing endpoints.
+
+        A wrong password and an unknown address give the same answer, and take a
+        comparable amount of time, so that this endpoint cannot be used to find
+        out which addresses are registered.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The address or the password is wrong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: invalid_credentials
+                  message: the email address or password is wrong
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
 
   /events:
     get:
@@ -111,6 +194,8 @@ paths:
                 $ref: "#/components/schemas/Hold"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -152,6 +237,8 @@ paths:
                 $ref: "#/components/schemas/Reservation"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -197,6 +284,8 @@ paths:
           description: The hold is gone and the seat is available again
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -216,13 +305,17 @@ paths:
 
 components:
   securitySchemes:
-    UserID:
-      type: apiKey
-      in: header
-      name: X-User-ID
+    BearerToken:
+      type: http
+      scheme: bearer
       description: |
-        The caller's user id. A placeholder for authentication: it is trusted as
-        sent, so it must never be exposed to untrusted clients as it stands.
+        A signed token naming the caller, sent as `Authorization: Bearer <token>`.
+
+        The payload is signed, not encrypted: anyone holding a token can read the
+        user id out of it, but nobody can change it without the signing secret.
+
+        Mint one for local use with `go run ./cmd/token dilara`, then paste it
+        into **Authorize** above.
 
   parameters:
     EventID:
@@ -307,6 +400,31 @@ components:
               code: idempotency_key_reused
               message: this idempotency key was already used for a different request
 
+    Unauthorized:
+      description: |
+        No token was sent (`unauthenticated`), or the one sent was not valid
+        (`invalid_token`). The answer never says which part of a token failed, so
+        that a caller cannot work its way towards one that passes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unauthenticated
+              message: this endpoint requires a bearer token
+
+    BodyTooLarge:
+      description: The request body exceeds the 8 KiB limit
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: request_body_too_large
+              message: the request body is too large
+
     NotFound:
       description: The event, seat or hold does not exist
       content:
@@ -319,6 +437,58 @@ components:
               message: hold not found
 
   schemas:
+    Credentials:
+      type: object
+      required: [email, password]
+      description: |
+        Unknown fields are refused rather than ignored, so a typo such as
+        "passwrod" is reported instead of quietly leaving the password empty.
+      properties:
+        email:
+          type: string
+          format: email
+          example: dilara@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: a-perfectly-fine-password
+
+    User:
+      type: object
+      required: [id, email, createdAt]
+      description: An account. The password hash is never part of any response.
+      properties:
+        id:
+          type: string
+          example: 4f9a2b7c3d1e4a6f
+        email:
+          type: string
+          example: dilara@example.com
+        createdAt:
+          type: string
+          format: date-time
+
+    Session:
+      type: object
+      required: [token, userId, expiresAt, expiresInSeconds]
+      properties:
+        token:
+          type: string
+          description: |
+            Send as `Authorization: Bearer <token>`. The payload is signed, not
+            encrypted: it can be read, but not changed.
+          example: ZGlsYXJhfDE3ODcwNDYwODk.ToxdszNwKcCeItfOx0cQk2Nj4hsM2_-FGA9UtGor1XM
+        userId:
+          type: string
+          example: 4f9a2b7c3d1e4a6f
+        expiresAt:
+          type: string
+          format: date-time
+        expiresInSeconds:
+          type: integer
+          example: 3600
+
     Health:
       type: object
       required: [status]
@@ -450,6 +620,14 @@ components:
                 - seat_not_held
                 - hold_expired
                 - not_hold_owner
+                - unauthenticated
+                - invalid_token
+                - invalid_credentials
+                - email_taken
+                - invalid_email
+                - weak_password
+                - invalid_request_body
+                - request_body_too_large
                 - idempotency_in_progress
                 - idempotency_key_reused
                 - user_id_required
