@@ -37,11 +37,20 @@ type Handler struct {
 	clock    Clock
 	logger   *slog.Logger
 	web      http.Handler
+	broker   Broker
 }
 
 // New returns a handler over the given service.
 func New(service ReservationService, accounts AccountService, clock Clock, logger *slog.Logger) *Handler {
 	return &Handler{service: service, accounts: accounts, clock: clock, logger: logger}
+}
+
+// WithBroker turns on the live update stream. Optional, so a handler can be
+// built without one.
+func (h *Handler) WithBroker(broker Broker) *Handler {
+	h.broker = broker
+
+	return h
 }
 
 // WithWeb mounts the browser interface at the root. Optional, so the tests can
@@ -66,6 +75,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /auth/login", h.login)
 	mux.HandleFunc("GET /events", h.listEvents)
 	mux.HandleFunc("GET /events/{eventID}/seats", h.seatMap)
+	mux.HandleFunc("GET /events/{eventID}/stream", h.stream)
 	mux.HandleFunc("POST /events/{eventID}/seats/{seatID}/hold", h.holdSeat)
 	mux.HandleFunc("POST /holds/{holdID}/confirm", h.confirmReservation)
 	mux.HandleFunc("DELETE /holds/{holdID}", h.releaseSeat)

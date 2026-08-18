@@ -43,6 +43,10 @@ func newTestService(seats ...*domain.Seat) (*ReservationService, *fakeClock, *re
 	return svc, clock, repo
 }
 
+func newTestSeat() *domain.Seat {
+	return domain.NewSeat(testEventID, testSeatID, "A", 1)
+}
+
 func testEvent() *domain.Event {
 	return &domain.Event{
 		ID:       testEventID,

@@ -31,6 +31,10 @@ var (
 // carries a Retry-After header saying when to come back.
 var errTooManyRequests = errors.New("too many requests, slow down")
 
+// errStreamUnavailable means the server cannot hold a connection open, which is
+// a deployment problem rather than anything the caller did.
+var errStreamUnavailable = errors.New("live updates are not available")
+
 // Idempotency failures. Both are the client's mistake or the client's timing, so
 // neither says anything about the seat itself.
 var (
@@ -80,6 +84,7 @@ var errorMapping = []struct {
 	{errInvalidRequestBody, http.StatusBadRequest, "invalid_request_body"},
 	{errRequestBodyTooLarge, http.StatusRequestEntityTooLarge, "request_body_too_large"},
 	{errTooManyRequests, http.StatusTooManyRequests, "too_many_requests"},
+	{errStreamUnavailable, http.StatusServiceUnavailable, "stream_unavailable"},
 
 	{domain.ErrEmptyUserID, http.StatusBadRequest, "user_id_required"},
 	{domain.ErrEmptyHoldID, http.StatusBadRequest, "hold_id_required"},

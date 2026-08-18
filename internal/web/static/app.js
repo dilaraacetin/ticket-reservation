@@ -16,6 +16,7 @@ const state = {
   hold: null,        // { holdId, seatId, expiresAt }
   countdownTimer: null,
   refreshTimer: null,
+  stream: null,          // EventSource, open while a seat map is on screen
 };
 
 // --- talking to the API -------------------------------------------------
@@ -150,6 +151,7 @@ function signOut() {
 
   $("whoami").classList.add("hidden");
   clearInterval(state.refreshTimer);
+  closeStream();
   show("screen-auth");
 }
 
@@ -200,10 +202,37 @@ async function openEvent(event) {
   await loadSeats();
   show("screen-seats");
 
-  // Polling, so a seat taken in another tab shows up here. Three seconds sits
-  // well inside the rate limit and is fast enough to feel live.
+  openStream();
+
+  // A slow poll behind the stream, not instead of it. It catches the one change
+  // the server does not announce yet, a hold expiring under the sweeper, and it
+  // covers the gap while a dropped stream reconnects.
   clearInterval(state.refreshTimer);
-  state.refreshTimer = setInterval(loadSeats, 3000);
+  state.refreshTimer = setInterval(loadSeats, 15000);
+}
+
+// openStream holds a connection open and reloads the map whenever the server
+// says a seat changed.
+function openStream() {
+  closeStream();
+
+  state.stream = new EventSource(`/events/${encodeURIComponent(state.event.id)}/stream`);
+  state.stream.addEventListener("seat_changed", () => loadSeats());
+
+  state.stream.addEventListener("turn_came", (message) => {
+    const notice = JSON.parse(message.data);
+    showNote(`Seat ${notice.seatId} is free and held for you.`);
+    loadSeats();
+  });
+
+  state.stream.onerror = () => {};
+}
+
+function closeStream() {
+  if (state.stream) {
+    state.stream.close();
+    state.stream = null;
+  }
 }
 
 async function loadSeats() {
@@ -352,6 +381,7 @@ $("sign-up").addEventListener("click", signUp);
 $("sign-out").addEventListener("click", signOut);
 $("back").addEventListener("click", () => {
   clearInterval(state.refreshTimer);
+  closeStream();
   loadEvents();
 });
 $("confirm").addEventListener("click", confirmHold);

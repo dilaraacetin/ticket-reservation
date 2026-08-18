@@ -64,6 +64,19 @@ func (w *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+func (w *statusRecorder) Flush() {
+	flusher, ok := w.ResponseWriter.(http.Flusher)
+	if !ok {
+		return
+	}
+
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+
+	flusher.Flush()
+}
+
 func Logging(logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

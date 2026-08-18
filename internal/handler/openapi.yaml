@@ -10,6 +10,9 @@ info:
     holding a seat may confirm or release it, and a hold that has run out frees
     the seat immediately, whether or not the background sweeper has noticed yet.
 
+    **Live updates**: `GET /events/{eventID}/stream` keeps a connection open and
+    pushes a notice whenever a seat changes, so a client does not have to poll.
+
     **Limits**: every caller has an allowance. Signing in is limited far more
     tightly than reading, because each attempt costs a password hash. A refusal is
     a 429 carrying `Retry-After`.
@@ -177,6 +180,54 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+
+  /events/{eventID}/stream:
+    get:
+      tags: [events]
+      summary: Watch an event for changes
+      description: |
+        A server-sent event stream that stays open and pushes a notice whenever
+        something changes, so a client does not have to keep asking.
+
+        Each notice says *what* changed rather than what it changed to, so the
+        client fetches the seat map when it hears one. That keeps a notice from
+        going stale in flight and from carrying more than the seat map endpoint
+        would.
+
+        Kinds sent:
+
+        - `seat_changed` — a seat's status is no longer what you last saw. Public,
+          so every watcher of the event gets it.
+        - `turn_came` — a seat you were waiting for is now held for you. Sent only
+          to the caller it concerns, which needs a token.
+
+        Comment lines are sent every 25 seconds to keep proxies from closing an
+        idle connection. Browsers reconnect on their own when it drops.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "200":
+          description: The stream is open
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: seat_changed
+                data: {"kind":"seat_changed","eventId":"event-1","seatId":"A1","at":"2026-08-18T12:00:00Z"}
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: The server cannot hold a connection open
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: stream_unavailable
+                  message: live updates are not available
 
   /events/{eventID}/seats/{seatID}/hold:
     post:
@@ -666,6 +717,7 @@ components:
                 - invalid_request_body
                 - request_body_too_large
                 - too_many_requests
+                - stream_unavailable
                 - idempotency_in_progress
                 - idempotency_key_reused
                 - user_id_required
