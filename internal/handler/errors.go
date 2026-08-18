@@ -13,6 +13,14 @@ import (
 // any, the X-User-ID header stands in for it.
 var errUserIDRequired = errors.New("X-User-ID header is required")
 
+// Idempotency failures. Both are the client's mistake or the client's timing, so
+// neither says anything about the seat itself.
+var (
+	errIdempotencyKeyReused = errors.New("this idempotency key was already used for a different request")
+
+	errIdempotencyInProgress = errors.New("a request with this idempotency key is still in progress")
+)
+
 // errorBody is the single shape every failure comes back in, so that clients can
 // branch on code instead of matching on prose.
 type errorBody struct {
@@ -34,6 +42,8 @@ var errorMapping = []struct {
 	{domain.ErrSeatNotHeld, http.StatusConflict, "seat_not_held"},
 	{domain.ErrHoldExpired, http.StatusGone, "hold_expired"},
 	{domain.ErrNotHoldOwner, http.StatusForbidden, "not_hold_owner"},
+	{errIdempotencyInProgress, http.StatusConflict, "idempotency_in_progress"},
+	{errIdempotencyKeyReused, http.StatusUnprocessableEntity, "idempotency_key_reused"},
 	{errUserIDRequired, http.StatusBadRequest, "user_id_required"},
 	{domain.ErrEmptyUserID, http.StatusBadRequest, "user_id_required"},
 	{domain.ErrEmptyHoldID, http.StatusBadRequest, "hold_id_required"},

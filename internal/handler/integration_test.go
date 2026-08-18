@@ -54,6 +54,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *movableClock) {
 		RequestID,
 		Logging(discardLogger()),
 		Recovery(discardLogger()),
+		Idempotency(repository.NewMemoryIdempotencyRepository(), clock, 24*time.Hour, discardLogger()),
 	))
 
 	t.Cleanup(srv.Close)
@@ -70,12 +71,21 @@ type apiResponse struct {
 func request(t *testing.T, srv *httptest.Server, method, path, userID string) apiResponse {
 	t.Helper()
 
+	return requestWithKey(t, srv, method, path, userID, "")
+}
+
+func requestWithKey(t *testing.T, srv *httptest.Server, method, path, userID, key string) apiResponse {
+	t.Helper()
+
 	req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+path, nil)
 	if err != nil {
 		t.Fatalf("building request failed: %v", err)
 	}
 	if userID != "" {
 		req.Header.Set(userIDHeader, userID)
+	}
+	if key != "" {
+		req.Header.Set(idempotencyKeyHeader, key)
 	}
 
 	resp, err := srv.Client().Do(req)
@@ -227,5 +237,74 @@ func TestIntegration_UnknownEventAndSeat(t *testing.T) {
 				t.Errorf("status = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIntegration_RetriedConfirmIsSafe(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	resp := request(t, srv, http.MethodPost, "/events/"+testEventID+"/seats/A1/hold", testUser)
+	hold := decodeBody[holdResponse](t, resp.body)
+
+	confirm := "/holds/" + hold.HoldID + "/confirm"
+
+	first := requestWithKey(t, srv, http.MethodPost, confirm, testUser, "retry-key")
+	if first.status != http.StatusOK {
+		t.Fatalf("first confirm status = %d, want 200: %s", first.status, first.body)
+	}
+
+	for attempt := range 2 {
+		again := requestWithKey(t, srv, http.MethodPost, confirm, testUser, "retry-key")
+		if again.status != http.StatusOK {
+			t.Errorf("retry %d status = %d, want 200", attempt+1, again.status)
+		}
+		if string(again.body) != string(first.body) {
+			t.Errorf("retry %d body = %q, want %q", attempt+1, again.body, first.body)
+		}
+		if got := again.header.Get(idempotentReplayHeader); got != "true" {
+			t.Errorf("retry %d %s = %q, want true", attempt+1, idempotentReplayHeader, got)
+		}
+	}
+
+	seats := request(t, srv, http.MethodGet, "/events/"+testEventID+"/seats", "")
+	if got := decodeBody[seatMapResponse](t, seats.body).Seats[0].Status; got != "reserved" {
+		t.Errorf("A1 status = %q, want reserved", got)
+	}
+}
+
+func TestIntegration_RetriedConfirmWithoutAKeyStillFails(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	resp := request(t, srv, http.MethodPost, "/events/"+testEventID+"/seats/A1/hold", testUser)
+	hold := decodeBody[holdResponse](t, resp.body)
+	confirm := "/holds/" + hold.HoldID + "/confirm"
+
+	if got := request(t, srv, http.MethodPost, confirm, testUser).status; got != http.StatusOK {
+		t.Fatalf("first confirm status = %d, want 200", got)
+	}
+	if got := request(t, srv, http.MethodPost, confirm, testUser).status; got != http.StatusNotFound {
+		t.Errorf("bare retry status = %d, want 404", got)
+	}
+}
+
+func TestIntegration_RetriedHoldReturnsTheSameHold(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	path := "/events/" + testEventID + "/seats/A2/hold"
+
+	first := requestWithKey(t, srv, http.MethodPost, path, testUser, "hold-key")
+	if first.status != http.StatusCreated {
+		t.Fatalf("first hold status = %d, want 201: %s", first.status, first.body)
+	}
+
+	second := requestWithKey(t, srv, http.MethodPost, path, testUser, "hold-key")
+	if second.status != http.StatusCreated {
+		t.Fatalf("retry status = %d, want 201 rather than the 409 a bare retry would get", second.status)
+	}
+
+	firstHold := decodeBody[holdResponse](t, first.body)
+	secondHold := decodeBody[holdResponse](t, second.body)
+	if firstHold.HoldID != secondHold.HoldID {
+		t.Errorf("hold ids differ: %q and %q", firstHold.HoldID, secondHold.HoldID)
 	}
 }

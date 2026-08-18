@@ -13,6 +13,7 @@ const (
 	DefaultHoldTTL         = 5 * time.Minute
 	DefaultSweepInterval   = 30 * time.Second
 	DefaultShutdownTimeout = 10 * time.Second
+	DefaultIdempotencyTTL  = 24 * time.Hour
 	DefaultLogLevel        = "info"
 )
 
@@ -23,6 +24,7 @@ type Config struct {
 	HoldTTL         time.Duration
 	SweepInterval   time.Duration
 	ShutdownTimeout time.Duration
+	IdempotencyTTL  time.Duration
 	LogLevel        string
 }
 
@@ -49,6 +51,9 @@ func Load() (Config, error) {
 	if cfg.ShutdownTimeout, err = durationVar("SHUTDOWN_TIMEOUT", DefaultShutdownTimeout); err != nil {
 		return Config{}, err
 	}
+	if cfg.IdempotencyTTL, err = durationVar("IDEMPOTENCY_TTL", DefaultIdempotencyTTL); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, cfg.validate()
 }
@@ -68,6 +73,9 @@ func (c Config) validate() error {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("%w: SHUTDOWN_TIMEOUT must be positive, got %s", ErrInvalidConfig, c.ShutdownTimeout)
+	}
+	if c.IdempotencyTTL <= 0 {
+		return fmt.Errorf("%w: IDEMPOTENCY_TTL must be positive, got %s", ErrInvalidConfig, c.IdempotencyTTL)
 	}
 	if !validLogLevels[c.LogLevel] {
 		return fmt.Errorf("%w: LOG_LEVEL %q is not one of debug, info, warn, error", ErrInvalidConfig, c.LogLevel)

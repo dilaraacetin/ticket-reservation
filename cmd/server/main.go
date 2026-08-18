@@ -57,7 +57,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	clock := service.SystemClock{}
 
-	events, seats, closeStores, err := openStores(ctx, cfg, logger)
+	events, seats, keys, closeStores, err := openStores(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -86,10 +86,13 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// RequestID first so that everything inside it can log the id, and Recovery
 	// inside Logging so that a panicking request still produces a log line.
+	// Idempotency sits innermost, so a replayed answer is still logged and a
+	// panic inside it is still recovered.
 	root := handler.Chain(api.Routes(),
 		handler.RequestID,
 		handler.Logging(logger),
 		handler.Recovery(logger),
+		handler.Idempotency(keys, clock, cfg.IdempotencyTTL, logger),
 	)
 
 	srv := &http.Server{
@@ -142,38 +145,39 @@ func openStores(
 	ctx context.Context,
 	cfg config.Config,
 	logger *slog.Logger,
-) (repository.EventRepository, repository.SeatRepository, func(), error) {
+) (repository.EventRepository, repository.SeatRepository, repository.IdempotencyRepository, func(), error) {
 	if !cfg.UsesDatabase() {
 		logger.InfoContext(ctx, "using in-memory stores", "reason", "DATABASE_URL is not set")
 
 		events, seats := seedMemoryStores()
 
-		return events, seats, func() {}, nil
+		return events, seats, repository.NewMemoryIdempotencyRepository(), func() {}, nil
 	}
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("configuring the connection pool: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("configuring the connection pool: %w", err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 
-		return nil, nil, nil, fmt.Errorf("reaching the database: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("reaching the database: %w", err)
 	}
 
 	logger.InfoContext(ctx, "using postgres stores")
 
 	events := repository.NewPostgresEventRepository(pool)
 	seats := repository.NewPostgresSeatRepository(pool)
+	keys := repository.NewPostgresIdempotencyRepository(pool)
 
 	if err := seedPostgresStores(ctx, events, seats); err != nil {
 		pool.Close()
 
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return events, seats, pool.Close, nil
+	return events, seats, keys, pool.Close, nil
 }
 
 func demoEvent() *domain.Event {
