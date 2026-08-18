@@ -134,6 +134,8 @@ func TestOpenAPISpec_DocumentsEveryRoute(t *testing.T) {
 	// deliberately left out of the spec, being documentation rather than API.
 	routes := map[string][]string{
 		"/health":                               {"get"},
+		"/auth/register":                        {"post"},
+		"/auth/login":                           {"post"},
 		"/events":                               {"get"},
 		"/events/{eventID}/seats":               {"get"},
 		"/events/{eventID}/seats/{seatID}/hold": {"post"},

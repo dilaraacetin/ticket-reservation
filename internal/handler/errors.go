@@ -6,12 +6,30 @@ import (
 
 	"ticket-reservation/internal/domain"
 	"ticket-reservation/internal/repository"
+	"ticket-reservation/internal/service"
 )
 
 // errUserIDRequired is the one failure the handler layer owns: the caller did not
 // say who it is. Authentication would normally answer that, and until there is
 // any, the X-User-ID header stands in for it.
-var errUserIDRequired = errors.New("X-User-ID header is required")
+// Authentication failures. Both answer 401, and both say as little as possible:
+// a caller told exactly what was wrong with its token learns how to improve it.
+var (
+	errUnauthenticated = errors.New("this endpoint requires a bearer token")
+
+	errInvalidToken = errors.New("the bearer token is not valid")
+)
+
+// Request body failures, both of which are the caller's to fix.
+var (
+	errInvalidRequestBody = errors.New("the request body is not the expected JSON object")
+
+	errRequestBodyTooLarge = errors.New("the request body is too large")
+)
+
+// errTooManyRequests means the caller has used up its allowance. The answer
+// carries a Retry-After header saying when to come back.
+var errTooManyRequests = errors.New("too many requests, slow down")
 
 // Idempotency failures. Both are the client's mistake or the client's timing, so
 // neither says anything about the seat itself.
@@ -44,7 +62,25 @@ var errorMapping = []struct {
 	{domain.ErrNotHoldOwner, http.StatusForbidden, "not_hold_owner"},
 	{errIdempotencyInProgress, http.StatusConflict, "idempotency_in_progress"},
 	{errIdempotencyKeyReused, http.StatusUnprocessableEntity, "idempotency_key_reused"},
-	{errUserIDRequired, http.StatusBadRequest, "user_id_required"},
+	// 401 rather than 403: we do not know who the caller is, as opposed to
+	// knowing and refusing them.
+	{errUnauthenticated, http.StatusUnauthorized, "unauthenticated"},
+	{errInvalidToken, http.StatusUnauthorized, "invalid_token"},
+
+	// The address is taken: understood, well formed, and in conflict with what
+	// already exists.
+	{repository.ErrEmailTaken, http.StatusConflict, "email_taken"},
+
+	// Deliberately one code for both a wrong password and an unknown address, so
+	// that the answer does not reveal which addresses are registered.
+	{service.ErrInvalidCredentials, http.StatusUnauthorized, "invalid_credentials"},
+
+	{domain.ErrInvalidEmail, http.StatusBadRequest, "invalid_email"},
+	{domain.ErrWeakPassword, http.StatusBadRequest, "weak_password"},
+	{errInvalidRequestBody, http.StatusBadRequest, "invalid_request_body"},
+	{errRequestBodyTooLarge, http.StatusRequestEntityTooLarge, "request_body_too_large"},
+	{errTooManyRequests, http.StatusTooManyRequests, "too_many_requests"},
+
 	{domain.ErrEmptyUserID, http.StatusBadRequest, "user_id_required"},
 	{domain.ErrEmptyHoldID, http.StatusBadRequest, "hold_id_required"},
 	{domain.ErrInvalidHoldDuration, http.StatusBadRequest, "invalid_hold_duration"},

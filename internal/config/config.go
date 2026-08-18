@@ -14,7 +14,11 @@ const (
 	DefaultSweepInterval   = 30 * time.Second
 	DefaultShutdownTimeout = 10 * time.Second
 	DefaultIdempotencyTTL  = 24 * time.Hour
-	DefaultLogLevel        = "info"
+	DefaultTokenTTL        = time.Hour
+
+	DefaultRateLimitTTL = 10 * time.Minute
+	DefaultLogLevel     = "info"
+	DevAuthSecret       = "k9Xm2pQrS4tU6vW8yZ0aB3dEf1GhIjKl"
 )
 
 // Config is the whole of the process's configuration.
@@ -25,6 +29,10 @@ type Config struct {
 	SweepInterval   time.Duration
 	ShutdownTimeout time.Duration
 	IdempotencyTTL  time.Duration
+	AuthSecret      string
+	TokenTTL        time.Duration
+	Argon2Memory    uint32
+	RateLimitTTL    time.Duration
 	LogLevel        string
 }
 
@@ -37,6 +45,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Addr:        stringVar("ADDR", DefaultAddr),
 		DatabaseURL: stringVar("DATABASE_URL", ""),
+		AuthSecret:  stringVar("AUTH_SECRET", DevAuthSecret),
 		LogLevel:    stringVar("LOG_LEVEL", DefaultLogLevel),
 	}
 
@@ -54,6 +63,15 @@ func Load() (Config, error) {
 	if cfg.IdempotencyTTL, err = durationVar("IDEMPOTENCY_TTL", DefaultIdempotencyTTL); err != nil {
 		return Config{}, err
 	}
+	if cfg.TokenTTL, err = durationVar("TOKEN_TTL", DefaultTokenTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.RateLimitTTL, err = durationVar("RATE_LIMIT_TTL", DefaultRateLimitTTL); err != nil {
+		return Config{}, err
+	}
+
+	memory, _ := strconv.Atoi(os.Getenv("ARGON2_MEMORY_KIB"))
+	cfg.Argon2Memory = uint32(max(0, memory))
 
 	return cfg, cfg.validate()
 }
@@ -77,12 +95,24 @@ func (c Config) validate() error {
 	if c.IdempotencyTTL <= 0 {
 		return fmt.Errorf("%w: IDEMPOTENCY_TTL must be positive, got %s", ErrInvalidConfig, c.IdempotencyTTL)
 	}
+	if c.RateLimitTTL <= 0 {
+		return fmt.Errorf("%w: RATE_LIMIT_TTL must be positive, got %s", ErrInvalidConfig, c.RateLimitTTL)
+	}
+	if c.TokenTTL <= 0 {
+		return fmt.Errorf("%w: TOKEN_TTL must be positive, got %s", ErrInvalidConfig, c.TokenTTL)
+	}
+	if len(c.AuthSecret) < MinAuthSecretLength {
+		return fmt.Errorf("%w: AUTH_SECRET must be at least %d bytes, got %d",
+			ErrInvalidConfig, MinAuthSecretLength, len(c.AuthSecret))
+	}
 	if !validLogLevels[c.LogLevel] {
 		return fmt.Errorf("%w: LOG_LEVEL %q is not one of debug, info, warn, error", ErrInvalidConfig, c.LogLevel)
 	}
 
 	return nil
 }
+
+const MinAuthSecretLength = 32
 
 var validLogLevels = map[string]bool{
 	"debug": true,

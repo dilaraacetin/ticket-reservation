@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"ticket-reservation/internal/auth"
 	"ticket-reservation/internal/config"
 	"ticket-reservation/internal/domain"
 	"ticket-reservation/internal/handler"
@@ -57,7 +58,17 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	clock := service.SystemClock{}
 
-	events, seats, keys, closeStores, err := openStores(ctx, cfg, logger)
+	tokens, err := auth.NewTokens(cfg.AuthSecret)
+	if err != nil {
+		return err
+	}
+
+	if cfg.AuthSecret == config.DevAuthSecret {
+		logger.WarnContext(ctx, "signing tokens with the development secret",
+			"fix", "set AUTH_SECRET before deploying anywhere real")
+	}
+
+	events, seats, keys, users, closeStores, err := openStores(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -71,6 +82,19 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		HoldTTL: cfg.HoldTTL,
 	})
 
+	accounts, err := service.NewAccountService(service.AccountConfig{
+		Users:    users,
+		Hasher:   auth.NewPasswordHasher(argon2Params(cfg)),
+		Tokens:   tokens,
+		Clock:    clock,
+		NewID:    service.NewRandomID,
+		TokenTTL: cfg.TokenTTL,
+		Logger:   logger,
+	})
+	if err != nil {
+		return err
+	}
+
 	sweeper := service.NewHoldSweeper(seats, clock, cfg.SweepInterval, logger)
 
 	sweeperDone := make(chan struct{})
@@ -82,16 +106,32 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		}
 	}()
 
-	api := handler.New(reservations, clock, logger)
+	api := handler.New(reservations, accounts, clock, logger)
 
 	// RequestID first so that everything inside it can log the id, and Recovery
 	// inside Logging so that a panicking request still produces a log line.
 	// Idempotency sits innermost, so a replayed answer is still logged and a
 	// panic inside it is still recovered.
+	limiter := handler.NewRateLimiter(clock, cfg.RateLimitTTL)
+
+	limiterDone := make(chan struct{})
+	go func() {
+		defer close(limiterDone)
+
+		if err := limiter.Run(ctx, cfg.RateLimitTTL, logger); err != nil {
+			logger.ErrorContext(ctx, "the rate limiter's cleanup failed", "err", err)
+		}
+	}()
+
+	// Authenticate first, so a signed in caller is rate limited as itself and an
+	// idempotency key is scoped to it. RateLimit before Idempotency, so a refused
+	// caller never reaches the store at all.
 	root := handler.Chain(api.Routes(),
 		handler.RequestID,
 		handler.Logging(logger),
 		handler.Recovery(logger),
+		handler.Authenticate(tokens, clock, logger),
+		handler.RateLimit(limiter, logger),
 		handler.Idempotency(keys, clock, cfg.IdempotencyTTL, logger),
 	)
 
@@ -133,6 +173,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	<-sweeperDone
+	<-limiterDone
 	logger.Info("server stopped")
 
 	return nil
@@ -145,24 +186,34 @@ func openStores(
 	ctx context.Context,
 	cfg config.Config,
 	logger *slog.Logger,
-) (repository.EventRepository, repository.SeatRepository, repository.IdempotencyRepository, func(), error) {
+) (
+	repository.EventRepository,
+	repository.SeatRepository,
+	repository.IdempotencyRepository,
+	repository.UserRepository,
+	func(),
+	error,
+) {
 	if !cfg.UsesDatabase() {
 		logger.InfoContext(ctx, "using in-memory stores", "reason", "DATABASE_URL is not set")
 
 		events, seats := seedMemoryStores()
 
-		return events, seats, repository.NewMemoryIdempotencyRepository(), func() {}, nil
+		return events, seats,
+			repository.NewMemoryIdempotencyRepository(),
+			repository.NewMemoryUserRepository(),
+			func() {}, nil
 	}
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("configuring the connection pool: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("configuring the connection pool: %w", err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 
-		return nil, nil, nil, nil, fmt.Errorf("reaching the database: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("reaching the database: %w", err)
 	}
 
 	logger.InfoContext(ctx, "using postgres stores")
@@ -170,14 +221,15 @@ func openStores(
 	events := repository.NewPostgresEventRepository(pool)
 	seats := repository.NewPostgresSeatRepository(pool)
 	keys := repository.NewPostgresIdempotencyRepository(pool)
+	users := repository.NewPostgresUserRepository(pool)
 
 	if err := seedPostgresStores(ctx, events, seats); err != nil {
 		pool.Close()
 
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
-	return events, seats, keys, pool.Close, nil
+	return events, seats, keys, users, pool.Close, nil
 }
 
 func demoEvent() *domain.Event {
@@ -226,4 +278,15 @@ func seedPostgresStores(
 	}
 
 	return nil
+}
+
+// argon2Params takes the configured memory cost, leaving everything else at the
+// hasher's defaults.
+func argon2Params(cfg config.Config) auth.Argon2Params {
+	params := auth.DefaultArgon2Params()
+	if cfg.Argon2Memory > 0 {
+		params.Memory = cfg.Argon2Memory
+	}
+
+	return params
 }

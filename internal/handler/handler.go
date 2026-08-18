@@ -13,8 +13,6 @@ import (
 	"ticket-reservation/internal/domain"
 )
 
-const userIDHeader = "X-User-ID"
-
 // ReservationService is the slice of the service this package needs. It is
 // declared here, on the consuming side, so that tests can supply a hand written
 // fake and the service package stays unaware of HTTP.
@@ -34,14 +32,15 @@ type Clock interface {
 
 // Handler serves the API.
 type Handler struct {
-	service ReservationService
-	clock   Clock
-	logger  *slog.Logger
+	service  ReservationService
+	accounts AccountService
+	clock    Clock
+	logger   *slog.Logger
 }
 
 // New returns a handler over the given service.
-func New(service ReservationService, clock Clock, logger *slog.Logger) *Handler {
-	return &Handler{service: service, clock: clock, logger: logger}
+func New(service ReservationService, accounts AccountService, clock Clock, logger *slog.Logger) *Handler {
+	return &Handler{service: service, accounts: accounts, clock: clock, logger: logger}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
@@ -50,6 +49,8 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /docs", h.docs)
 	mux.HandleFunc("GET "+specPath, h.openAPI)
+	mux.HandleFunc("POST /auth/register", h.register)
+	mux.HandleFunc("POST /auth/login", h.login)
 	mux.HandleFunc("GET /events", h.listEvents)
 	mux.HandleFunc("GET /events/{eventID}/seats", h.seatMap)
 	mux.HandleFunc("POST /events/{eventID}/seats/{seatID}/hold", h.holdSeat)
@@ -155,9 +156,9 @@ func (h *Handler) releaseSeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func userIDFrom(r *http.Request) (string, error) {
-	userID := r.Header.Get(userIDHeader)
+	userID := UserIDFromContext(r.Context())
 	if userID == "" {
-		return "", errUserIDRequired
+		return "", errUnauthenticated
 	}
 
 	return userID, nil
