@@ -14,6 +14,10 @@ linters:
         text: "unused-parameter"
       - linters: [revive]
         text: "^exported:"
+      - linters: [revive]
+        text: "^package-comments:"
+      - linters: [revive]
+        text: "^blank-imports:"
 
 formatters:
   enable:
