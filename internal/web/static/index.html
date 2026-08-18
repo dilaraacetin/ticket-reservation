@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ticket Reservation</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="phone">
+    <header class="bar">
+      <div class="brand">Tickets</div>
+      <div id="whoami" class="whoami hidden">
+        <span id="whoami-name"></span>
+        <button id="sign-out" class="link">Sign out</button>
+      </div>
+    </header>
+
+    <div id="alert" class="alert hidden"></div>
+
+    <!-- Sign in -->
+    <section id="screen-auth" class="screen">
+      <h1>Welcome</h1>
+      <p class="muted">Sign in to hold a seat. Reading the seat map needs no account.</p>
+
+      <form id="auth-form" class="form">
+        <label>Email
+          <input id="email" type="email" autocomplete="email" required
+                 placeholder="dilara.cetin@example.com">
+        </label>
+        <label>Password
+          <input id="password" type="password" autocomplete="current-password" required
+                 minlength="8" placeholder="at least 8 characters">
+        </label>
+        <div class="row">
+          <button id="sign-in" type="submit" class="primary">Sign in</button>
+          <button id="sign-up" type="button" class="secondary">Create account</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Events -->
+    <section id="screen-events" class="screen hidden">
+      <h1>Upcoming events</h1>
+      <div id="event-list" class="events"></div>
+    </section>
+
+    <!-- Seat map -->
+    <section id="screen-seats" class="screen hidden">
+      <button id="back" class="link back">&larr; Events</button>
+      <h1 id="event-name"></h1>
+      <p id="event-meta" class="muted"></p>
+
+      <div class="stage">Stage</div>
+      <div id="seat-map" class="seat-map"></div>
+
+      <div class="legend">
+        <span><i class="swatch available"></i> Available</span>
+        <span><i class="swatch held"></i> Held</span>
+        <span><i class="swatch mine"></i> Yours</span>
+        <span><i class="swatch reserved"></i> Sold</span>
+      </div>
+    </section>
+
+    <!-- The hold, once there is one -->
+    <div id="hold-bar" class="hold-bar hidden">
+      <div>
+        <div class="hold-seat">Seat <span id="hold-seat"></span></div>
+        <div class="hold-countdown">Expires in <span id="hold-countdown"></span></div>
+      </div>
+      <div class="row">
+        <button id="release" class="secondary">Release</button>
+        <button id="confirm" class="primary">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

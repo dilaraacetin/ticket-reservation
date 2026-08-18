@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ticket-reservation/internal/domain"
+	"ticket-reservation/internal/event"
 	"ticket-reservation/internal/repository"
 )
 
@@ -16,34 +17,51 @@ const DefaultHoldTTL = 5 * time.Minute
 
 // ReservationService is the entry point for every seat operation.
 type ReservationService struct {
-	seats   repository.SeatRepository
-	events  repository.EventRepository
-	clock   Clock
-	newID   func() string
-	holdTTL time.Duration
+	seats     repository.SeatRepository
+	events    repository.EventRepository
+	clock     Clock
+	newID     func() string
+	holdTTL   time.Duration
+	publisher event.Publisher
 }
 
 // Config carries the service's dependencies. A struct rather than a list of
 // parameters, because two of them are a func and a Duration and passing those
 // in the wrong order would still compile.
 type Config struct {
-	Seats   repository.SeatRepository
-	Events  repository.EventRepository
-	Clock   Clock
-	NewID   func() string
-	HoldTTL time.Duration
+	Seats     repository.SeatRepository
+	Events    repository.EventRepository
+	Clock     Clock
+	NewID     func() string
+	HoldTTL   time.Duration
+	Publisher event.Publisher
 }
 
 // NewReservationService wires a service to its stores, clock and id source. The
 // id source is injected so that tests can hand out predictable hold ids.
 func NewReservationService(cfg Config) *ReservationService {
-	return &ReservationService{
-		seats:   cfg.Seats,
-		events:  cfg.Events,
-		clock:   cfg.Clock,
-		newID:   cfg.NewID,
-		holdTTL: cfg.HoldTTL,
+	if cfg.Publisher == nil {
+		cfg.Publisher = event.Discard{}
 	}
+
+	return &ReservationService{
+		seats:     cfg.Seats,
+		events:    cfg.Events,
+		clock:     cfg.Clock,
+		newID:     cfg.NewID,
+		holdTTL:   cfg.HoldTTL,
+		publisher: cfg.Publisher,
+	}
+}
+
+// announceSeatChange tells watchers a seat is no longer what they last saw.
+func (s *ReservationService) announceSeatChange(eventID, seatID string) {
+	s.publisher.Publish(event.Event{
+		Kind:    event.SeatChanged,
+		EventID: eventID,
+		SeatID:  seatID,
+		At:      s.clock.Now(),
+	})
 }
 
 func NewRandomID() string {
@@ -73,6 +91,8 @@ func (s *ReservationService) HoldSeat(ctx context.Context, eventID, seatID, user
 		return nil, err
 	}
 
+	s.announceSeatChange(eventID, seatID)
+
 	return hold, nil
 }
 
@@ -99,15 +119,33 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, holdID, use
 		return nil, err
 	}
 
+	s.announceSeatChange(confirmed.EventID, confirmed.ID)
+
 	return confirmed, nil
 }
 
 // ReleaseSeat gives up a hold, making the seat available again straight away
 // instead of waiting for the sweeper to notice.
 func (s *ReservationService) ReleaseSeat(ctx context.Context, holdID, userID string) error {
-	return s.seats.UpdateSeatByHoldID(ctx, holdID, func(seat *domain.Seat) error {
-		return seat.Release(userID)
+	var released *domain.Seat
+
+	err := s.seats.UpdateSeatByHoldID(ctx, holdID, func(seat *domain.Seat) error {
+		if err := seat.Release(userID); err != nil {
+			return err
+		}
+
+		result := *seat
+		released = &result
+
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	s.announceSeatChange(released.EventID, released.ID)
+
+	return nil
 }
 
 // Seat returns a single seat, for the read side of the API.
