@@ -216,48 +216,59 @@ func runIdempotencyRepositoryContract(t *testing.T, newRepo idempotencyRepositor
 
 	// The guarantee that matters: out of many simultaneous retries, exactly one
 	// gets to do the work.
+	//
+	// Repeated over several rounds with a fresh key each time, because a race this
+	// narrow can hide on one machine and show up on another: this is exactly the
+	// bug CI caught when a single round happened to pass locally.
 	t.Run("only one of many simultaneous claims wins", func(t *testing.T) {
-		const attempts = 30
+		const (
+			rounds   = 10
+			attempts = 40
+		)
 
 		repo := newRepo(t)
 		ctx := t.Context()
 
-		var (
-			wg      sync.WaitGroup
-			granted atomic.Int32
-			refused atomic.Int32
-		)
+		for round := range rounds {
+			key := fmt.Sprintf("hot-key-%d", round)
 
-		start := make(chan struct{})
+			var (
+				wg      sync.WaitGroup
+				granted atomic.Int32
+				refused atomic.Int32
+			)
 
-		for i := range attempts {
-			wg.Add(1)
+			start := make(chan struct{})
 
-			go func() {
-				defer wg.Done()
+			for i := range attempts {
+				wg.Add(1)
 
-				<-start
+				go func() {
+					defer wg.Done()
 
-				_, claimed, err := repo.Claim(ctx, newRecord(testUser, "hot-key", now))
-				switch {
-				case err != nil:
-					t.Errorf("attempt %d: Claim() error = %v", i, err)
-				case claimed:
-					granted.Add(1)
-				default:
-					refused.Add(1)
-				}
-			}()
-		}
+					<-start
 
-		close(start)
-		wg.Wait()
+					_, claimed, err := repo.Claim(ctx, newRecord(testUser, key, now))
+					switch {
+					case err != nil:
+						t.Errorf("round %d attempt %d: Claim() error = %v", round, i, err)
+					case claimed:
+						granted.Add(1)
+					default:
+						refused.Add(1)
+					}
+				}()
+			}
 
-		if got := granted.Load(); got != 1 {
-			t.Errorf("granted claims = %d, want exactly 1", got)
-		}
-		if got := refused.Load(); got != attempts-1 {
-			t.Errorf("refused claims = %d, want %d", got, attempts-1)
+			close(start)
+			wg.Wait()
+
+			if got := granted.Load(); got != 1 {
+				t.Fatalf("round %d: granted claims = %d, want exactly 1", round, got)
+			}
+			if got := refused.Load(); got != attempts-1 {
+				t.Fatalf("round %d: refused claims = %d, want %d", round, got, attempts-1)
+			}
 		}
 	})
 

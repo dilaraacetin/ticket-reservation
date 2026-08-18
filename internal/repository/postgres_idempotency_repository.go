@@ -23,15 +23,22 @@ func NewPostgresIdempotencyRepository(pool *pgxpool.Pool) *PostgresIdempotencyRe
 const (
 	idempotencyColumns = `user_id, key, fingerprint, state, status_code, response, created_at, expires_at`
 
-	// FOR UPDATE for the same reason the seat store uses it: two retries arriving
-	// together must not both decide the key is free.
-	selectIdempotencyForUpdateSQL = `select ` + idempotencyColumns + `
+	selectIdempotencySQL = `select ` + idempotencyColumns + `
 		  from idempotency_keys
-		 where user_id = $1 and key = $2
-		   for update`
+		 where user_id = $1 and key = $2`
 
-	// One statement covers both a first claim and taking over an expired record,
-	// so no branch in Go has to decide which case it is looking at.
+	// The whole claim is this one statement, and that is the point.
+	//
+	// An earlier version read the row with SELECT ... FOR UPDATE first and then
+	// wrote it. That looks safe and is not: a row lock cannot lock a row that does
+	// not exist yet, so two callers both found nothing and both went on to write.
+	// Here the unique index does the serialising instead, which it can do because
+	// the index entry exists the moment either writer commits.
+	//
+	// Three outcomes, told apart by whether a row comes back:
+	//   - nothing there      -> the insert happens, a row is returned, claim granted
+	//   - there but expired  -> the where passes, the row is taken over and returned
+	//   - there and alive    -> the where fails, no row comes back, claim refused
 	claimIdempotencySQL = `insert into idempotency_keys
 		     (user_id, key, fingerprint, state, created_at, expires_at)
 		 values ($1, $2, $3, 'in_progress', $4, $5)
@@ -41,7 +48,9 @@ const (
 		        status_code = null,
 		        response    = null,
 		        created_at  = excluded.created_at,
-		        expires_at  = excluded.expires_at`
+		        expires_at  = excluded.expires_at
+		  where idempotency_keys.expires_at <= excluded.created_at
+		 returning ` + idempotencyColumns
 
 	completeIdempotencySQL = `update idempotency_keys
 		   set state = 'completed', status_code = $3, response = $4
@@ -56,32 +65,33 @@ func (r *PostgresIdempotencyRepository) Claim(
 	record IdempotencyRecord,
 ) (IdempotencyRecord, bool, error) {
 	var (
-		existing IdempotencyRecord
-		claimed  bool
+		result  IdempotencyRecord
+		claimed bool
 	)
 
 	err := r.inTransaction(ctx, func(tx pgx.Tx) error {
-		found, err := scanIdempotency(tx.QueryRow(ctx, selectIdempotencyForUpdateSQL, record.UserID, record.Key))
-
-		switch {
-		case err == nil && found.ExpiresAt.After(record.CreatedAt):
-			existing, claimed = found, false
+		granted, err := scanIdempotency(tx.QueryRow(ctx, claimIdempotencySQL,
+			record.UserID, record.Key, record.Fingerprint, record.CreatedAt, record.ExpiresAt,
+		))
+		if err == nil {
+			result, claimed = granted, true
 
 			return nil
-		case err != nil && !errors.Is(err, pgx.ErrNoRows):
-			return fmt.Errorf("locking idempotency key: %w", err)
 		}
-
-		if _, err := tx.Exec(ctx, claimIdempotencySQL,
-			record.UserID, record.Key, record.Fingerprint, record.CreatedAt, record.ExpiresAt,
-		); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("claiming idempotency key: %w", err)
 		}
 
-		record.State = IdempotencyInProgress
-		record.StatusCode = 0
-		record.Response = nil
-		existing, claimed = record, true
+		// No row back means a live record holds the key. Reading it inside the
+		// same transaction is safe: the conflicting row is locked by the statement
+		// above even though its where clause refused to update it, so it cannot be
+		// released out from under this read.
+		holder, err := scanIdempotency(tx.QueryRow(ctx, selectIdempotencySQL, record.UserID, record.Key))
+		if err != nil {
+			return fmt.Errorf("reading the holder of an idempotency key: %w", err)
+		}
+
+		result, claimed = holder, false
 
 		return nil
 	})
@@ -89,7 +99,7 @@ func (r *PostgresIdempotencyRepository) Claim(
 		return IdempotencyRecord{}, false, err
 	}
 
-	return existing, claimed, nil
+	return result, claimed, nil
 }
 
 // Complete stores the answer to replay.
