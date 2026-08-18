@@ -21,6 +21,7 @@ import (
 	"ticket-reservation/internal/handler"
 	"ticket-reservation/internal/repository"
 	"ticket-reservation/internal/service"
+	"ticket-reservation/internal/web"
 )
 
 func main() {
@@ -106,7 +107,12 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		}
 	}()
 
-	api := handler.New(reservations, accounts, clock, logger)
+	ui, err := web.Handler()
+	if err != nil {
+		return fmt.Errorf("preparing the web interface: %w", err)
+	}
+
+	api := handler.New(reservations, accounts, clock, logger).WithWeb(ui)
 
 	// RequestID first so that everything inside it can log the id, and Recovery
 	// inside Logging so that a panicking request still produces a log line.

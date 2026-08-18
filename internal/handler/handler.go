@@ -36,6 +36,7 @@ type Handler struct {
 	accounts AccountService
 	clock    Clock
 	logger   *slog.Logger
+	web      http.Handler
 }
 
 // New returns a handler over the given service.
@@ -43,8 +44,20 @@ func New(service ReservationService, accounts AccountService, clock Clock, logge
 	return &Handler{service: service, accounts: accounts, clock: clock, logger: logger}
 }
 
+// WithWeb mounts the browser interface at the root. Optional, so the tests can
+// build a handler that is nothing but the API.
+func (h *Handler) WithWeb(web http.Handler) *Handler {
+	h.web = web
+
+	return h
+}
+
 func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
+
+	if h.web != nil {
+		mux.Handle("GET /", h.web)
+	}
 
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("GET /docs", h.docs)
