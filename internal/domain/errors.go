@@ -19,4 +19,6 @@ var (
 	ErrEmptyHoldID = errors.New("hold id must not be empty")
 
 	ErrInvalidHoldDuration = errors.New("hold duration must be positive")
+
+	ErrUnknownSeatStatus = errors.New("unknown seat status")
 )

@@ -15,7 +15,8 @@ const (
 )
 
 // String implements fmt.Stringer so that statuses read as words in logs and
-// test failures instead of as bare integers.
+// test failures instead of as bare integers. It is also the stored form, which
+// is why the words matter: a database column holds these exact strings.
 func (s SeatStatus) String() string {
 	switch s {
 	case StatusAvailable:
@@ -29,9 +30,15 @@ func (s SeatStatus) String() string {
 	}
 }
 
-// IsValid reports whether s is one of the defined statuses. It is for the edges
-// of the system, where a status arrives as a number from JSON or a database
-// column.
-func (s SeatStatus) IsValid() bool {
-	return s >= StatusAvailable && s <= StatusReserved
+// ParseSeatStatus turns the stored form back into a status. It exists for the
+// edges of the system, where a status arrives as text from a database column or
+// a JSON body and cannot be trusted to be one of the three.
+func ParseSeatStatus(value string) (SeatStatus, error) {
+	for _, status := range []SeatStatus{StatusAvailable, StatusHeld, StatusReserved} {
+		if status.String() == value {
+			return status, nil
+		}
+	}
+
+	return 0, fmt.Errorf("%w: %q", ErrUnknownSeatStatus, value)
 }

@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestSeatStatus_String(t *testing.T) {
 	tests := []struct {
@@ -31,24 +34,51 @@ func TestSeatStatus_ZeroValueIsAvailable(t *testing.T) {
 	}
 }
 
-func TestSeatStatus_IsValid(t *testing.T) {
+func TestParseSeatStatus(t *testing.T) {
 	tests := []struct {
-		name   string
-		status SeatStatus
-		want   bool
+		name    string
+		value   string
+		want    SeatStatus
+		wantErr bool
 	}{
-		{"available", StatusAvailable, true},
-		{"held", StatusHeld, true},
-		{"reserved", StatusReserved, true},
-		{"below range", SeatStatus(-1), false},
-		{"above range", SeatStatus(3), false},
+		{"available", "available", StatusAvailable, false},
+		{"held", "held", StatusHeld, false},
+		{"reserved", "reserved", StatusReserved, false},
+		{"unknown word", "booked", 0, true},
+		{"empty", "", 0, true},
+		{"wrong case", "Available", 0, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.status.IsValid(); got != tt.want {
-				t.Errorf("IsValid() = %v, want %v", got, tt.want)
+			got, err := ParseSeatStatus(tt.value)
+			if tt.wantErr {
+				if !errors.Is(err, ErrUnknownSeatStatus) {
+					t.Fatalf("ParseSeatStatus() error = %v, want %v", err, ErrUnknownSeatStatus)
+				}
+
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseSeatStatus() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseSeatStatus() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSeatStatus_RoundTrip(t *testing.T) {
+	for status := StatusAvailable; status <= StatusReserved; status++ {
+		got, err := ParseSeatStatus(status.String())
+		if err != nil {
+			t.Errorf("ParseSeatStatus(%q) error = %v", status.String(), err)
+
+			continue
+		}
+		if got != status {
+			t.Errorf("round trip of %v gave %v", status, got)
+		}
 	}
 }
