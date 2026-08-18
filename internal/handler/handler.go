@@ -176,11 +176,15 @@ func (h *Handler) writeJSON(w http.ResponseWriter, r *http.Request, status int, 
 }
 
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	writeAPIError(w, r, h.logger, err)
+}
+
+func writeAPIError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {
 	status, code := statusForError(err)
 
 	message := err.Error()
 	if status == http.StatusInternalServerError {
-		h.logger.ErrorContext(r.Context(), "request failed",
+		logger.ErrorContext(r.Context(), "request failed",
 			"err", err,
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -193,5 +197,10 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	body.Error.Code = code
 	body.Error.Message = message
 
-	h.writeJSON(w, r, status, body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		logger.ErrorContext(r.Context(), "writing the error response failed", "err", err)
+	}
 }

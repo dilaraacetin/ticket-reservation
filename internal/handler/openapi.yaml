@@ -10,6 +10,10 @@ info:
     holding a seat may confirm or release it, and a hold that has run out frees
     the seat immediately, whether or not the background sweeper has noticed yet.
 
+    **Retries**: every write endpoint accepts an `Idempotency-Key` header. A
+    repeated request carrying the same key gets the first attempt's answer back,
+    marked with `Idempotent-Replay: true`, rather than being executed twice.
+
     **Identity**: there is no authentication yet. Every write endpoint reads the
     caller from the `X-User-ID` header, which stands in for a verified identity
     until stage 4 adds one. Click **Authorize** and type any user id to try the
@@ -91,6 +95,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/EventID"
         - $ref: "#/components/parameters/SeatID"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "201":
           description: The seat is held
@@ -109,7 +114,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The seat is already held by a live hold, or already reserved
+          description: |
+            The seat is already held by a live hold or already reserved
+            (`seat_not_available`), or an earlier request with the same
+            Idempotency-Key is still running (`idempotency_in_progress`).
           content:
             application/json:
               schema:
@@ -118,6 +126,8 @@ paths:
                 error:
                   code: seat_not_available
                   message: seat is not available
+        "422":
+          $ref: "#/components/responses/KeyReused"
 
   /holds/{holdID}/confirm:
     post:
@@ -125,10 +135,14 @@ paths:
       summary: Confirm a hold into a reservation
       description: |
         Only the user holding the seat may confirm it, and only before the hold
-        runs out. Confirming clears the hold, so a retried confirm reports 404
-        rather than success; stage 5 addresses that with an idempotency key.
+        runs out.
+
+        Confirming clears the hold, so a bare retry would report 404: the hold it
+        names no longer exists. Send an `Idempotency-Key` and the retry gets this
+        answer back instead.
       parameters:
         - $ref: "#/components/parameters/HoldID"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: The seat is reserved
@@ -143,7 +157,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The seat is not held, so there is nothing to confirm
+          description: |
+            The seat is not held, so there is nothing to confirm
+            (`seat_not_held`), or an earlier request with the same
+            Idempotency-Key is still running (`idempotency_in_progress`).
           content:
             application/json:
               schema:
@@ -164,6 +181,8 @@ paths:
                 error:
                   code: hold_expired
                   message: hold has expired
+        "422":
+          $ref: "#/components/responses/KeyReused"
 
   /holds/{holdID}:
     delete:
@@ -172,6 +191,7 @@ paths:
       description: Frees the seat straight away instead of waiting for the hold to expire.
       parameters:
         - $ref: "#/components/parameters/HoldID"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "204":
           description: The hold is gone and the seat is available again
@@ -181,6 +201,18 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: An earlier request with the same Idempotency-Key is still running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: idempotency_in_progress
+                  message: a request with this idempotency key is still in progress
+        "422":
+          $ref: "#/components/responses/KeyReused"
 
 components:
   securitySchemes:
@@ -210,6 +242,24 @@ components:
       schema:
         type: string
       example: A1
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Makes a retry safe. A repeated request carrying the same key returns the
+        first attempt's answer instead of doing the work again, and that answer
+        carries an `Idempotent-Replay: true` header.
+
+        Without it, a confirm whose response was lost cannot be retried: the
+        second attempt reports 404, because the first one consumed the hold.
+
+        Keys are scoped to the caller, so one client cannot reach another's
+        answer, and they expire after 24 hours.
+      schema:
+        type: string
+      example: 4f9a2b7c-3d1e-4a6f-9b0c-2e5d8a1f7c33
 
     HoldID:
       name: holdID
@@ -242,6 +292,20 @@ components:
             error:
               code: not_hold_owner
               message: hold belongs to another user
+
+    KeyReused:
+      description: |
+        The Idempotency-Key was first used for a different request. Replaying the
+        other request's answer would be wrong, so it is refused rather than
+        guessed at.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: idempotency_key_reused
+              message: this idempotency key was already used for a different request
 
     NotFound:
       description: The event, seat or hold does not exist
@@ -386,6 +450,8 @@ components:
                 - seat_not_held
                 - hold_expired
                 - not_hold_owner
+                - idempotency_in_progress
+                - idempotency_key_reused
                 - user_id_required
                 - hold_id_required
                 - invalid_hold_duration
