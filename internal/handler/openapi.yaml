@@ -10,6 +10,10 @@ info:
     holding a seat may confirm or release it, and a hold that has run out frees
     the seat immediately, whether or not the background sweeper has noticed yet.
 
+    **Limits**: every caller has an allowance. Signing in is limited far more
+    tightly than reading, because each attempt costs a password hash. A refusal is
+    a 429 carrying `Retry-After`.
+
     **Retries**: every write endpoint accepts an `Idempotency-Key` header. A
     repeated request carrying the same key gets the first attempt's answer back,
     marked with `Idempotent-Replay: true`, rather than being executed twice.
@@ -90,6 +94,8 @@ paths:
                   message: that email address is already registered
         "413":
           $ref: "#/components/responses/BodyTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /auth/login:
     post:
@@ -130,6 +136,8 @@ paths:
                   message: the email address or password is wrong
         "413":
           $ref: "#/components/responses/BodyTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /events:
     get:
@@ -167,6 +175,8 @@ paths:
                 $ref: "#/components/schemas/SeatMap"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /events/{eventID}/seats/{seatID}/hold:
     post:
@@ -213,6 +223,8 @@ paths:
                   message: seat is not available
         "422":
           $ref: "#/components/responses/KeyReused"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /holds/{holdID}/confirm:
     post:
@@ -270,6 +282,8 @@ paths:
                   message: hold has expired
         "422":
           $ref: "#/components/responses/KeyReused"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /holds/{holdID}:
     delete:
@@ -302,6 +316,8 @@ paths:
                   message: a request with this idempotency key is still in progress
         "422":
           $ref: "#/components/responses/KeyReused"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
 components:
   securitySchemes:
@@ -424,6 +440,27 @@ components:
             error:
               code: request_body_too_large
               message: the request body is too large
+
+    TooManyRequests:
+      description: |
+        The caller has used up its allowance. Signing in is limited far more
+        tightly than reading, because each attempt costs a password hash.
+
+        The `Retry-After` header says how many seconds to wait.
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again
+          schema:
+            type: integer
+            example: 6
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: too_many_requests
+              message: too many requests, slow down
 
     NotFound:
       description: The event, seat or hold does not exist
@@ -628,6 +665,7 @@ components:
                 - weak_password
                 - invalid_request_body
                 - request_body_too_large
+                - too_many_requests
                 - idempotency_in_progress
                 - idempotency_key_reused
                 - user_id_required

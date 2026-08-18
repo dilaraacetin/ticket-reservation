@@ -112,13 +112,26 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// inside Logging so that a panicking request still produces a log line.
 	// Idempotency sits innermost, so a replayed answer is still logged and a
 	// panic inside it is still recovered.
-	// Authenticate before Idempotency, because an idempotency key is scoped to the
-	// caller and the caller comes from the token.
+	limiter := handler.NewRateLimiter(clock, cfg.RateLimitTTL)
+
+	limiterDone := make(chan struct{})
+	go func() {
+		defer close(limiterDone)
+
+		if err := limiter.Run(ctx, cfg.RateLimitTTL, logger); err != nil {
+			logger.ErrorContext(ctx, "the rate limiter's cleanup failed", "err", err)
+		}
+	}()
+
+	// Authenticate first, so a signed in caller is rate limited as itself and an
+	// idempotency key is scoped to it. RateLimit before Idempotency, so a refused
+	// caller never reaches the store at all.
 	root := handler.Chain(api.Routes(),
 		handler.RequestID,
 		handler.Logging(logger),
 		handler.Recovery(logger),
 		handler.Authenticate(tokens, clock, logger),
+		handler.RateLimit(limiter, logger),
 		handler.Idempotency(keys, clock, cfg.IdempotencyTTL, logger),
 	)
 
@@ -160,6 +173,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	<-sweeperDone
+	<-limiterDone
 	logger.Info("server stopped")
 
 	return nil

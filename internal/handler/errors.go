@@ -27,6 +27,10 @@ var (
 	errRequestBodyTooLarge = errors.New("the request body is too large")
 )
 
+// errTooManyRequests means the caller has used up its allowance. The answer
+// carries a Retry-After header saying when to come back.
+var errTooManyRequests = errors.New("too many requests, slow down")
+
 // Idempotency failures. Both are the client's mistake or the client's timing, so
 // neither says anything about the seat itself.
 var (
@@ -75,6 +79,7 @@ var errorMapping = []struct {
 	{domain.ErrWeakPassword, http.StatusBadRequest, "weak_password"},
 	{errInvalidRequestBody, http.StatusBadRequest, "invalid_request_body"},
 	{errRequestBodyTooLarge, http.StatusRequestEntityTooLarge, "request_body_too_large"},
+	{errTooManyRequests, http.StatusTooManyRequests, "too_many_requests"},
 
 	{domain.ErrEmptyUserID, http.StatusBadRequest, "user_id_required"},
 	{domain.ErrEmptyHoldID, http.StatusBadRequest, "hold_id_required"},
