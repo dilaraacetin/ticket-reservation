@@ -138,6 +138,7 @@ func TestOpenAPISpec_DocumentsEveryRoute(t *testing.T) {
 		"/auth/login":                           {"post"},
 		"/events":                               {"get"},
 		"/events/{eventID}/seats":               {"get"},
+		"/events/{eventID}/stream":              {"get"},
 		"/events/{eventID}/seats/{seatID}/hold": {"post"},
 		"/holds/{holdID}/confirm":               {"post"},
 		"/holds/{holdID}":                       {"delete"},

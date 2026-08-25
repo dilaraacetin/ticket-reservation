@@ -18,9 +18,11 @@ import (
 	"ticket-reservation/internal/auth"
 	"ticket-reservation/internal/config"
 	"ticket-reservation/internal/domain"
+	"ticket-reservation/internal/event"
 	"ticket-reservation/internal/handler"
 	"ticket-reservation/internal/repository"
 	"ticket-reservation/internal/service"
+	"ticket-reservation/internal/web"
 )
 
 func main() {
@@ -74,12 +76,16 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 	defer closeStores()
 
+	broker := event.NewBroker(logger)
+	defer broker.Close()
+
 	reservations := service.NewReservationService(service.Config{
-		Seats:   seats,
-		Events:  events,
-		Clock:   clock,
-		NewID:   service.NewRandomID,
-		HoldTTL: cfg.HoldTTL,
+		Seats:     seats,
+		Events:    events,
+		Clock:     clock,
+		NewID:     service.NewRandomID,
+		HoldTTL:   cfg.HoldTTL,
+		Publisher: broker,
 	})
 
 	accounts, err := service.NewAccountService(service.AccountConfig{
@@ -106,7 +112,14 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		}
 	}()
 
-	api := handler.New(reservations, accounts, clock, logger)
+	ui, err := web.Handler()
+	if err != nil {
+		return fmt.Errorf("preparing the web interface: %w", err)
+	}
+
+	api := handler.New(reservations, accounts, clock, logger).
+		WithWeb(ui).
+		WithBroker(broker)
 
 	// RequestID first so that everything inside it can log the id, and Recovery
 	// inside Logging so that a panicking request still produces a log line.
