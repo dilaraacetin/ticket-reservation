@@ -6,3 +6,7 @@ coverage.html
 .DS_Store
 .idea/
 .vscode/
+
+# Editor and assistant tooling, local to one machine.
+.serena/
+.claude/
