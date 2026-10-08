@@ -37,6 +37,13 @@
   /* The gutter every screen keeps at phone width. */
   --gutter: 16px;
 
+  /* How tall the bottom bar is: its border and padding, plus a tab's own
+     padding, icon pill, gap and label. Everything that has to sit clear of it
+     measures from here, because four separate guesses is how three of them end
+     up wrong. The safe-area inset is part of it, so a phone with a home
+     indicator or a floating browser toolbar reserves that space too. */
+  --tabbar: calc(73px + max(8px, env(safe-area-inset-bottom)));
+
   --font-display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
   --font-body: Geist, "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif;
 
@@ -169,7 +176,7 @@ h3 {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding-bottom: 84px;
+  padding-bottom: var(--tabbar);
 }
 
 .screen {
@@ -1315,7 +1322,7 @@ h3 {
 
 .holdbar {
   position: fixed;
-  inset: auto var(--gutter) 92px;
+  inset: auto var(--gutter) calc(var(--tabbar) + 12px);
   background: var(--surface-raised);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
@@ -1433,7 +1440,7 @@ h3 {
 /* The prompt that stands where the hold bar will be, before there is one. */
 .prompt {
   position: fixed;
-  inset: auto var(--gutter) 92px;
+  inset: auto var(--gutter) calc(var(--tabbar) + 12px);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -1473,7 +1480,7 @@ h3 {
 
 .waitlist {
   position: fixed;
-  inset: auto 0 76px;
+  inset: auto 0 var(--tabbar);
   background: var(--surface);
   border-top: 1px solid var(--line);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
