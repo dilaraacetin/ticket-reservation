@@ -23,6 +23,8 @@ type ReservationService struct {
 	newID     func() string
 	holdTTL   time.Duration
 	publisher event.Publisher
+	offerer   SeatOfferer
+	gate      SeatGate
 }
 
 // Config carries the service's dependencies. A struct rather than a list of
@@ -35,6 +37,10 @@ type Config struct {
 	NewID     func() string
 	HoldTTL   time.Duration
 	Publisher event.Publisher
+
+	// Gate decides who may take a seat. Defaults to letting everyone, which is
+	// what the tests about seats use; a deployment passes the real rule.
+	Gate SeatGate
 }
 
 // NewReservationService wires a service to its stores, clock and id source. The
@@ -44,6 +50,10 @@ func NewReservationService(cfg Config) *ReservationService {
 		cfg.Publisher = event.Discard{}
 	}
 
+	if cfg.Gate == nil {
+		cfg.Gate = AllowEveryone{}
+	}
+
 	return &ReservationService{
 		seats:     cfg.Seats,
 		events:    cfg.Events,
@@ -51,7 +61,18 @@ func NewReservationService(cfg Config) *ReservationService {
 		newID:     cfg.NewID,
 		holdTTL:   cfg.HoldTTL,
 		publisher: cfg.Publisher,
+		offerer:   discardOfferer{},
+		gate:      cfg.Gate,
 	}
+}
+
+// WithOfferer wires in what happens to a seat this service frees. Optional and
+// set afterwards, because the handoff needs this service to make its holds and
+// the two cannot both be built first.
+func (s *ReservationService) WithOfferer(offerer SeatOfferer) *ReservationService {
+	s.offerer = offerer
+
+	return s
 }
 
 // announceSeatChange tells watchers a seat is no longer what they last saw.
@@ -78,7 +99,24 @@ func (s *ReservationService) HoldSeat(ctx context.Context, eventID, seatID, user
 		holdID = s.newID()
 	)
 
-	err := s.seats.UpdateSeat(ctx, eventID, seatID, func(seat *domain.Seat) error {
+	if err := s.gate.MayTakeSeat(ctx, userID); err != nil {
+		return nil, err
+	}
+
+	// One extra read on the busiest path, and worth it: without it a withdrawn
+	// event keeps selling. Confirming is deliberately not guarded the same way —
+	// somebody already holding a seat was part way through a purchase when the
+	// event was pulled, and letting them finish is the kinder answer.
+	event, err := s.events.GetEvent(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	if event.IsCancelled() {
+		return nil, domain.ErrEventCancelled
+	}
+
+	err = s.seats.UpdateSeat(ctx, eventID, seatID, func(seat *domain.Seat) error {
 		if err := seat.Hold(holdID, userID, s.holdTTL, now); err != nil {
 			return err
 		}
@@ -100,13 +138,22 @@ func (s *ReservationService) HoldSeat(ctx context.Context, eventID, seatID, user
 // seat. Only the user holding the seat may confirm it, and only before the hold
 // runs out.
 func (s *ReservationService) ConfirmReservation(ctx context.Context, holdID, userID string) (*domain.Seat, error) {
+	// Checked here as well as on holding, because a hold made before the rule
+	// applied would otherwise still turn into a sale.
+	if err := s.gate.MayTakeSeat(ctx, userID); err != nil {
+		return nil, err
+	}
+
 	var (
 		confirmed *domain.Seat
 		now       = s.clock.Now()
+		// Generated outside the closure, so a retry of the update does not mint a
+		// second code for the same ticket.
+		ticketCode = domain.FormatTicketCode(s.newID()[:8])
 	)
 
 	err := s.seats.UpdateSeatByHoldID(ctx, holdID, func(seat *domain.Seat) error {
-		if err := seat.Confirm(userID, now); err != nil {
+		if err := seat.Confirm(userID, ticketCode, now); err != nil {
 			return err
 		}
 
@@ -144,8 +191,53 @@ func (s *ReservationService) ReleaseSeat(ctx context.Context, holdID, userID str
 	}
 
 	s.announceSeatChange(released.EventID, released.ID)
+	s.offerer.Offer(released.Ref())
 
 	return nil
+}
+
+// Ticket is a seat the caller has, with enough of its event to show it. Seats
+// are stored per event, so the two have to be put back together somewhere, and
+// the service is the layer that may know about both.
+type Ticket struct {
+	Event *domain.Event
+	Seat  *domain.Seat
+}
+
+// MyTickets returns every seat the caller is holding or has reserved.
+//
+// Without this a confirmed seat is invisible: the seat map deliberately does
+// not say who holds or owns a seat, so a caller who closes the page has nothing
+// left that points back to it.
+func (s *ReservationService) MyTickets(ctx context.Context, userID string) ([]Ticket, error) {
+	if userID == "" {
+		return nil, domain.ErrEmptyUserID
+	}
+
+	seats, err := s.seats.ListSeatsForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// One lookup per event rather than per seat, because somebody with a whole
+	// row has one event and ten seats.
+	events := make(map[string]*domain.Event, len(seats))
+	tickets := make([]Ticket, 0, len(seats))
+
+	for _, seat := range seats {
+		event, seen := events[seat.EventID]
+		if !seen {
+			if event, err = s.events.GetEvent(ctx, seat.EventID); err != nil {
+				return nil, err
+			}
+
+			events[seat.EventID] = event
+		}
+
+		tickets = append(tickets, Ticket{Event: event, Seat: seat})
+	}
+
+	return tickets, nil
 }
 
 // Seat returns a single seat, for the read side of the API.

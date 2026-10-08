@@ -113,6 +113,8 @@ func Recovery(logger *slog.Logger) Middleware {
 					"requestId", RequestIDFromContext(r.Context()),
 				)
 
+				noteFailure(r.Context(), "internal_error")
+
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 

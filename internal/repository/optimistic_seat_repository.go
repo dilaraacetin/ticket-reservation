@@ -45,10 +45,11 @@ const (
 		       hold_created_at = $6,
 		       hold_expires_at = $7,
 		       reserved_by = $8,
+		       ticket_code = $9,
 		       version = version + 1
 		 where event_id = $1
 		   and id = $2
-		   and version = $9`
+		   and version = $10`
 )
 
 // GetSeat reads one seat. Reads need no strategy at all, so this is identical to
@@ -119,18 +120,25 @@ func (r *OptimisticSeatRepository) UpdateSeatByHoldID(
 
 // ExpireHolds is unchanged from the pessimistic store: a single statement is
 // already atomic, so there is no read-then-write gap for a version to guard.
-func (r *OptimisticSeatRepository) ExpireHolds(ctx context.Context, now time.Time) (int, error) {
-	tag, err := r.pool.Exec(ctx, expireHoldsSQL, now)
-	if err != nil {
-		return 0, fmt.Errorf("expiring holds: %w", err)
-	}
-
-	return int(tag.RowsAffected()), nil
+func (r *OptimisticSeatRepository) ExpireHolds(ctx context.Context, now time.Time) ([]domain.SeatRef, error) {
+	return expireHolds(ctx, r.pool, now)
 }
 
 // InsertSeats seeds seats.
-func (r *OptimisticSeatRepository) InsertSeats(ctx context.Context, seats ...*domain.Seat) error {
+// ListSeatsForUser returns every seat the user is holding or has reserved.
+func (r *OptimisticSeatRepository) ListSeatsForUser(ctx context.Context, userID string) ([]*domain.Seat, error) {
+	return seatsForUser(ctx, r.pool, userID)
+}
+
+// CreateSeats adds seats to an event.
+func (r *OptimisticSeatRepository) CreateSeats(ctx context.Context, seats ...*domain.Seat) (int, error) {
 	return insertSeats(ctx, r.pool, seats...)
+}
+
+func (r *OptimisticSeatRepository) InsertSeats(ctx context.Context, seats ...*domain.Seat) error {
+	_, err := insertSeats(ctx, r.pool, seats...)
+
+	return err
 }
 
 // applyIfUnchanged reports whether the attempt should be repeated.
@@ -157,6 +165,7 @@ func (r *OptimisticSeatRepository) applyIfUnchanged(
 		nullInstant(seat.HoldCreatedAt),
 		nullInstant(seat.HoldExpiresAt),
 		nullText(seat.ReservedBy),
+		nullText(seat.TicketCode),
 		row.version,
 	)
 	if err != nil {

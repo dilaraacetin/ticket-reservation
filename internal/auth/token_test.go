@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,58 @@ func TestTokens_RoundTrip(t *testing.T) {
 		t.Fatalf("Issue() error = %v", err)
 	}
 
-	got, err := tokens.Verify(token, now)
+	claims, err := tokens.Verify(token, now)
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	if got != "dilara" {
-		t.Errorf("user = %q, want dilara", got)
+	if claims.UserID != "dilara" {
+		t.Errorf("user = %q, want dilara", claims.UserID)
+	}
+	if claims.TokenID == "" {
+		t.Error("the token carries no id, so it could never be signed out")
+	}
+	if !claims.ExpiresAt.Equal(now.Add(time.Hour).Truncate(time.Second)) {
+		t.Errorf("ExpiresAt = %s, want %s", claims.ExpiresAt, now.Add(time.Hour))
+	}
+}
+
+// Two tokens must never share an id. An id that repeats is one that signs out
+// somebody else's token along with its own.
+func TestTokens_EveryTokenGetsItsOwnID(t *testing.T) {
+	tokens := newTestTokens(t)
+	now := testTime()
+
+	seen := make(map[string]bool, 100)
+
+	for range 100 {
+		token, err := tokens.Issue("dilara", now.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("Issue() error = %v", err)
+		}
+
+		claims, err := tokens.Verify(token, now)
+		if err != nil {
+			t.Fatalf("Verify() error = %v", err)
+		}
+
+		if seen[claims.TokenID] {
+			t.Fatalf("token id %q was issued twice", claims.TokenID)
+		}
+
+		seen[claims.TokenID] = true
+	}
+}
+
+// A token in the old two-field format has no id, so it cannot be signed out.
+// Accepting one would leave a token nothing can refuse.
+func TestTokens_RefusesTheOldFormat(t *testing.T) {
+	tokens := newTestTokens(t)
+
+	payload := "dilara" + separator + strconv.FormatInt(testTime().Add(time.Hour).Unix(), 10)
+	old := encode(payload) + "." + encode(string(tokens.sign(payload)))
+
+	if _, err := tokens.Verify(old, testTime()); !errors.Is(err, ErrMalformedToken) {
+		t.Errorf("Verify() on a token with no id = %v, want %v", err, ErrMalformedToken)
 	}
 }
 
@@ -176,9 +223,10 @@ func TestTokens_MalformedTokens(t *testing.T) {
 	}
 }
 
-// Two tokens for the same user at the same expiry are identical, which is what
-// makes them cacheable and comparable. Different expiries must differ.
-func TestTokens_AreDeterministic(t *testing.T) {
+// Tokens used to be deterministic: the same user and expiry produced the same
+// string. Carrying an id of their own deliberately ends that, because two sign
+// ins have to be revocable one at a time rather than together.
+func TestTokens_AreNotDeterministic(t *testing.T) {
 	tokens := newTestTokens(t)
 	now := testTime()
 
@@ -187,20 +235,26 @@ func TestTokens_AreDeterministic(t *testing.T) {
 		t.Fatalf("Issue() error = %v", err)
 	}
 
-	same, err := tokens.Issue("dilara", now.Add(time.Hour))
+	second, err := tokens.Issue("dilara", now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
 
-	later, err := tokens.Issue("dilara", now.Add(2*time.Hour))
-	if err != nil {
-		t.Fatalf("Issue() error = %v", err)
+	if first == second {
+		t.Error("two sign ins produced the same token, so signing out of one would sign out of both")
 	}
 
-	if first != same {
-		t.Error("the same user and expiry produced different tokens")
-	}
-	if first == later {
-		t.Error("a different expiry produced the same token")
+	// Both still name the same person and expire at the same moment.
+	for _, token := range []string{first, second} {
+		claims, err := tokens.Verify(token, now)
+		if err != nil {
+			t.Fatalf("Verify() error = %v", err)
+		}
+		if claims.UserID != "dilara" {
+			t.Errorf("user = %q, want dilara", claims.UserID)
+		}
+		if !claims.ExpiresAt.Equal(now.Add(time.Hour).Truncate(time.Second)) {
+			t.Errorf("ExpiresAt = %s, want %s", claims.ExpiresAt, now.Add(time.Hour))
+		}
 	}
 }

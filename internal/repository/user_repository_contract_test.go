@@ -47,12 +47,7 @@ var (
 )
 
 func testUserRecord(id, email string) *domain.User {
-	return &domain.User{
-		ID:           id,
-		Email:        email,
-		PasswordHash: testPasswordHash,
-		CreatedAt:    testTime(),
-	}
+	return domain.NewUser(id, email, testPasswordHash, testTime())
 }
 
 func TestUserRepositoryContract(t *testing.T) {
@@ -74,6 +69,8 @@ func TestUserRepositoryContract(t *testing.T) {
 func runUserRepositoryContract(t *testing.T, newRepo userRepositoryFactory) {
 	t.Helper()
 
+	now := testTime()
+
 	t.Run("a new account is stored and read back", func(t *testing.T) {
 		repo := newRepo(t)
 		user := testUserRecord("u1", "dilara@example.com")
@@ -94,6 +91,145 @@ func runUserRepositoryContract(t *testing.T, newRepo userRepositoryFactory) {
 		}
 		if !got.CreatedAt.Equal(user.CreatedAt) {
 			t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, user.CreatedAt)
+		}
+	})
+
+	// The authorization middleware resolves the id a token carries, so this is
+	// the lookup every administrative request goes through.
+	t.Run("an account can be read back by id", func(t *testing.T) {
+		repo := newRepo(t)
+
+		stored := testUserRecord("user-by-id", "dilara@example.com")
+		if err := repo.CreateUser(t.Context(), stored); err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		found, err := repo.GetUserByID(t.Context(), stored.ID)
+		if err != nil {
+			t.Fatalf("GetUserByID() error = %v", err)
+		}
+		if found.Email != stored.Email {
+			t.Errorf("email = %q, want %q", found.Email, stored.Email)
+		}
+
+		// Nobody becomes an administrator by signing up.
+		if found.Role != domain.RoleCustomer {
+			t.Errorf("role = %q, want %q", found.Role, domain.RoleCustomer)
+		}
+
+		if _, err := repo.GetUserByID(t.Context(), "nobody"); !errors.Is(err, ErrUserNotFound) {
+			t.Errorf("GetUserByID() for a stranger = %v, want %v", err, ErrUserNotFound)
+		}
+	})
+
+	t.Run("a role can be changed and read back", func(t *testing.T) {
+		repo := newRepo(t)
+
+		stored := testUserRecord("user-promoted", "admin@example.com")
+		if err := repo.CreateUser(t.Context(), stored); err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		if err := repo.SetRole(t.Context(), stored.Email, domain.RoleAdmin); err != nil {
+			t.Fatalf("SetRole() error = %v", err)
+		}
+
+		// Read by both routes, because the middleware uses one and the command
+		// line uses the other.
+		byID, err := repo.GetUserByID(t.Context(), stored.ID)
+		if err != nil {
+			t.Fatalf("GetUserByID() error = %v", err)
+		}
+		if !byID.Role.IsAdmin() {
+			t.Errorf("role by id = %q, want %q", byID.Role, domain.RoleAdmin)
+		}
+
+		byEmail, err := repo.GetUserByEmail(t.Context(), stored.Email)
+		if err != nil {
+			t.Fatalf("GetUserByEmail() error = %v", err)
+		}
+		if !byEmail.Role.IsAdmin() {
+			t.Errorf("role by email = %q, want %q", byEmail.Role, domain.RoleAdmin)
+		}
+
+		// And back again, so the command is not one way.
+		if err := repo.SetRole(t.Context(), stored.Email, domain.RoleCustomer); err != nil {
+			t.Fatalf("SetRole() error = %v", err)
+		}
+
+		demoted, err := repo.GetUserByID(t.Context(), stored.ID)
+		if err != nil {
+			t.Fatalf("GetUserByID() error = %v", err)
+		}
+		if demoted.Role.IsAdmin() {
+			t.Error("the account is still an administrator after being demoted")
+		}
+	})
+
+	t.Run("an address can be marked verified", func(t *testing.T) {
+		repo := newRepo(t)
+
+		stored := testUserRecord("user-verified", "dilara@example.com")
+		if err := repo.CreateUser(t.Context(), stored); err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		before, err := repo.GetUserByID(t.Context(), stored.ID)
+		if err != nil {
+			t.Fatalf("GetUserByID() error = %v", err)
+		}
+		if before.EmailVerified() {
+			t.Fatal("a new account is already verified")
+		}
+
+		if err := repo.MarkEmailVerified(t.Context(), stored.ID, stored.Email, now); err != nil {
+			t.Fatalf("MarkEmailVerified() error = %v", err)
+		}
+
+		after, err := repo.GetUserByID(t.Context(), stored.ID)
+		if err != nil {
+			t.Fatalf("GetUserByID() error = %v", err)
+		}
+		if !after.EmailVerified() {
+			t.Error("the address is still not verified")
+		}
+	})
+
+	// A link proves the address it was sent to. If the account is at a different
+	// one now, the link is about a question nobody is asking any more — so the
+	// account and the address have to match together, not one or the other.
+	t.Run("marking verified needs the account and the address to match", func(t *testing.T) {
+		repo := newRepo(t)
+
+		stored := testUserRecord("user-moved", "current@example.com")
+		if err := repo.CreateUser(t.Context(), stored); err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+
+		err := repo.MarkEmailVerified(t.Context(), stored.ID, "old@example.com", now)
+		if !errors.Is(err, ErrUserNotFound) {
+			t.Fatalf("MarkEmailVerified() with the wrong address = %v, want %v", err, ErrUserNotFound)
+		}
+
+		// And nothing was verified.
+		after, _ := repo.GetUserByID(t.Context(), stored.ID)
+		if after.EmailVerified() {
+			t.Error("a link for a different address verified this one")
+		}
+
+		// The same goes the other way: the right address but the wrong account.
+		err = repo.MarkEmailVerified(t.Context(), "somebody-else", stored.Email, now)
+		if !errors.Is(err, ErrUserNotFound) {
+			t.Errorf("MarkEmailVerified() for the wrong account = %v, want %v", err, ErrUserNotFound)
+		}
+	})
+
+	t.Run("setting the role of an unknown account is reported", func(t *testing.T) {
+		repo := newRepo(t)
+
+		err := repo.SetRole(t.Context(), "nobody@example.com", domain.RoleAdmin)
+		if !errors.Is(err, ErrUserNotFound) {
+			t.Errorf("SetRole() error = %v, want %v", err, ErrUserNotFound)
 		}
 	})
 

@@ -103,12 +103,34 @@ func (r *MemorySeatRepository) UpdateSeatByHoldID(
 	return ErrHoldNotFound
 }
 
-// ExpireHolds frees every seat whose hold has run out by now.
-func (r *MemorySeatRepository) ExpireHolds(_ context.Context, now time.Time) (int, error) {
+// ListSeatsForUser returns copies of every seat the user holds or has reserved.
+func (r *MemorySeatRepository) ListSeatsForUser(_ context.Context, userID string) ([]*domain.Seat, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	seats := make([]*domain.Seat, 0)
+
+	for _, stored := range r.seats {
+		if stored.HeldBy != userID && stored.ReservedBy != userID {
+			continue
+		}
+
+		seat := *stored
+		seats = append(seats, &seat)
+	}
+
+	sortSeats(seats)
+
+	return seats, nil
+}
+
+// ExpireHolds frees every seat whose hold has run out by now and returns which
+// ones it freed.
+func (r *MemorySeatRepository) ExpireHolds(_ context.Context, now time.Time) ([]domain.SeatRef, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	expired := 0
+	var freed []domain.SeatRef
 
 	for key, stored := range r.seats {
 		seat := *stored
@@ -117,10 +139,42 @@ func (r *MemorySeatRepository) ExpireHolds(_ context.Context, now time.Time) (in
 		}
 
 		r.seats[key] = &seat
-		expired++
+		freed = append(freed, seat.Ref())
 	}
 
-	return expired, nil
+	// Map order is random, so without this two runs over the same data would
+	// report the same seats in a different order.
+	slices.SortFunc(freed, func(a, b domain.SeatRef) int {
+		if event := strings.Compare(a.EventID, b.EventID); event != 0 {
+			return event
+		}
+
+		return strings.Compare(a.SeatID, b.SeatID)
+	})
+
+	return freed, nil
+}
+
+// CreateSeats adds seats, leaving alone any that are already there. Adding a row
+// twice must not reset a seat that is already held or sold.
+func (r *MemorySeatRepository) CreateSeats(_ context.Context, seats ...*domain.Seat) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	created := 0
+
+	for _, seat := range seats {
+		key := seatKey(seat.EventID, seat.ID)
+		if _, exists := r.seats[key]; exists {
+			continue
+		}
+
+		stored := *seat
+		r.seats[key] = &stored
+		created++
+	}
+
+	return created, nil
 }
 
 // ListSeats returns copies of every seat of an event, ordered by row and number
@@ -139,13 +193,23 @@ func (r *MemorySeatRepository) ListSeats(_ context.Context, eventID string) ([]*
 		seats = append(seats, &seat)
 	}
 
+	sortSeats(seats)
+
+	return seats, nil
+}
+
+// sortSeats puts seats in the order a seat map is read in, so callers get a
+// stable answer rather than Go's random map order.
+func sortSeats(seats []*domain.Seat) {
 	slices.SortFunc(seats, func(a, b *domain.Seat) int {
+		if event := strings.Compare(a.EventID, b.EventID); event != 0 {
+			return event
+		}
+
 		if row := strings.Compare(a.Row, b.Row); row != 0 {
 			return row
 		}
 
 		return a.Number - b.Number
 	})
-
-	return seats, nil
 }

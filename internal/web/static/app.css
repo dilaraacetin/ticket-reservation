@@ -1,222 +1,2000 @@
-:root {
-  --bg: #14151a;
-  --panel: #1d1f27;
-  --panel-2: #262933;
-  --line: #32363f;
-  --text: #f2f3f5;
-  --muted: #9aa0ab;
-  --accent: #f2683c;
+/* SeatHold — the design system, as tokens first and components second.
+   Time is the material: the countdown owns the one loud colour and everything
+   else stays quiet so the clock can speak. */
 
-  /* Seat states. */
-  --available: #3a3f4b;
-  --held: #d9a441;
-  --mine: #4c8df6;
-  --reserved: #b3402f;
+:root {
+  /* Dark is the default, so the tokens are defined here and re-tuned for light
+     below under the same names. Nothing outside this block names a colour. */
+  --bg: #120f0d;
+  --surface: #1d1916;
+  --surface-raised: #26211d;
+  --line: #2e2723;
+  --line-strong: #3a322c;
+  --text: #f5eee7;
+  --text-muted: #a8998b;
+
+  --primary: #ff9f43;
+  --on-primary: #1a1004;
+  --danger: #ff5b4f;
+  --warning: #f2c14e;
+  --success: #4cc38a;
+
+  --seat-open: #4b413a;
+  --seat-held-line: #b8a595;
+  --seat-held-fill: rgb(184 165 149 / 12%);
+  --seat-sold: #3a302a;
+  --seat-mine: #ff9f43;
+
+  --danger-bg: #2a1512;
+  --warning-bg: #231c0c;
+  --success-bg: #0f2419;
+  --info-bg: #241a0d;
+
+  --radius: 14px;
+  --radius-lg: 20px;
+  --tap: 52px;
+
+  /* The gutter every screen keeps at phone width. */
+  --gutter: 16px;
+
+  --font-display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: Geist, "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  color-scheme: dark;
 }
 
-* { box-sizing: border-box; }
+/* Same names, re-tuned so every pair still clears 4.5:1 on white. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #faf6f1;
+    --surface: #fff;
+    --surface-raised: #f3ece4;
+    --line: #e4dad0;
+    --line-strong: #d4c6b8;
+    --text: #1e1714;
+    --text-muted: #6b5d52;
+
+    --primary: #b05400;
+    --on-primary: #fff;
+    --danger: #c8322a;
+    --warning: #9a6a00;
+    --success: #1e8a57;
+
+    --seat-open: #d9cec4;
+    --seat-held-line: #8c7b6e;
+    --seat-held-fill: rgb(140 123 110 / 12%);
+    --seat-sold: #7a6b5f;
+    --seat-mine: #b05400;
+
+    --danger-bg: #fbe9e7;
+    --warning-bg: #fdf3dd;
+    --success-bg: #e6f4ed;
+    --info-bg: #fdf0e0;
+
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #faf6f1;
+  --surface: #fff;
+  --surface-raised: #f3ece4;
+  --line: #e4dad0;
+  --line-strong: #d4c6b8;
+  --text: #1e1714;
+  --text-muted: #6b5d52;
+  --primary: #b05400;
+  --on-primary: #fff;
+  --danger: #c8322a;
+  --warning: #9a6a00;
+  --success: #1e8a57;
+  --seat-open: #d9cec4;
+  --seat-held-line: #8c7b6e;
+  --seat-held-fill: rgb(140 123 110 / 12%);
+  --seat-sold: #7a6b5f;
+  --seat-mine: #b05400;
+  --danger-bg: #fbe9e7;
+  --warning-bg: #fdf3dd;
+  --success-bg: #e6f4ed;
+  --info-bg: #fdf0e0;
+
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
-  background: #0d0e12;
-  color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  display: flex;
-  justify-content: center;
-  padding: 24px 16px 96px;
-}
-
-/* A phone sized column, because the design this follows is a phone app. */
-.phone {
-  width: 100%;
-  max-width: 420px;
   background: var(--bg);
-  border-radius: 22px;
-  padding: 20px 18px 24px;
-  position: relative;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 18px;
-}
-
-.brand { font-weight: 700; letter-spacing: .3px; }
-
-.whoami { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
-
-h1 { font-size: 22px; margin: 0 0 6px; }
-.muted { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
-.hidden { display: none !important; }
-
-/* --- forms --- */
-
-.form { display: flex; flex-direction: column; gap: 14px; }
-
-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
-
-input {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px;
   color: var(--text);
-  font-size: 15px;
+  font: 400 16px/1.5 var(--font-body);
+  -webkit-font-smoothing: antialiased;
 }
 
-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* ---- typography ---- */
 
-.row { display: flex; gap: 10px; }
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  margin: 0;
+}
 
-button {
-  border: 0;
-  border-radius: 10px;
-  padding: 12px 16px;
-  font-size: 14px;
+.title {
+  font-size: 28px;
+  line-height: 32px;
+}
+
+.heading {
+  font-size: 19px;
+  line-height: 24px;
+}
+
+.label {
+  font: 600 12px/16px var(--font-body);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.caption,
+.muted {
+  color: var(--text-muted);
+}
+
+.caption {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Digits keep the same width while they tick, so nothing around them jitters. */
+.numeral {
+  font-variant-numeric: tabular-nums;
   font-weight: 600;
-  cursor: pointer;
+  letter-spacing: -0.04em;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---- app shell ---- */
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 84px;
+}
+
+.screen {
+  padding: 24px var(--gutter) 0;
   flex: 1;
 }
 
-button:disabled { opacity: .5; cursor: default; }
+.screen-head {
+  margin-bottom: 20px;
+}
 
-.primary { background: var(--accent); color: #14151a; }
-.secondary { background: var(--panel-2); color: var(--text); }
+.brandmark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.brandmark .mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--primary);
+  display: grid;
+  place-items: center;
+}
+
+.brandmark .mark svg {
+  width: 22px;
+  height: 22px;
+  color: var(--on-primary);
+}
+
+.brandmark .name {
+  font: 700 20px/1 var(--font-display);
+}
+
+/* ---- the way in ----
+   Sparse on purpose. Two fields, one button, and one way across at the bottom. */
+
+.auth {
+  max-width: 400px;
+  margin: 0 auto;
+  padding-top: 8px;
+}
+
+.auth .brandmark {
+  margin-bottom: 36px;
+}
+
+.auth > .title {
+  margin-bottom: 6px;
+}
+
+.auth > .muted {
+  margin: 0 0 28px;
+}
+
+.auth form {
+  margin-bottom: 22px;
+}
+
+.auth .btn-primary {
+  margin-top: 4px;
+}
+
+.auth-swap {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 15px;
+  margin: 0;
+}
+
+.auth-browse {
+  display: block;
+  margin: 26px auto 0;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* Sits in the field's label row, so it is next to what it reveals. */
+.reveal {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-muted);
+  font: 600 14px/1 var(--font-body);
+  cursor: pointer;
+}
+
+.reveal:hover {
+  color: var(--text);
+}
+
+/* ---- bottom navigation ---- */
+
+.tabs {
+  position: fixed;
+  inset: auto 0 0;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  z-index: 20;
+}
+
+.tab {
+  flex: 1;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font: 600 12px/16px var(--font-body);
+  cursor: pointer;
+}
+
+.tab svg {
+  width: 24px;
+  height: 24px;
+}
+
+.tab .pill {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 32px;
+  border-radius: 16px;
+}
+
+.tab[aria-current="page"] {
+  color: var(--primary);
+}
+
+.tab[aria-current="page"] .pill {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+/* ---- buttons ---- */
+
+.btn {
+  min-height: var(--tap);
+  padding: 0 20px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font: 600 16px/1 var(--font-body);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: filter 160ms ease-out, background 160ms ease-out;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  border-color: var(--line);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.btn-secondary {
+  background: var(--surface-raised);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.btn-danger {
+  background: none;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.btn-danger-solid {
+  background: var(--danger);
+  color: var(--on-primary);
+}
+
+.btn:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* An icon in a button. Without a size an svg that carries only a viewBox treats
+   itself as 100% wide, which in a full-width button is the whole button. */
+.btn svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.btn .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentcolor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .link {
   background: none;
-  color: var(--muted);
+  border: 0;
+  color: var(--primary);
+  font: 600 15px/1.4 var(--font-body);
+  cursor: pointer;
   padding: 0;
-  flex: 0;
-  font-weight: 500;
   text-decoration: underline;
 }
 
-.back { margin-bottom: 12px; display: block; }
+/* ---- forms ---- */
 
-/* --- alerts --- */
-
-.alert {
-  background: #3a1f1c;
-  border: 1px solid var(--reserved);
-  color: #ffd9d2;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 13px;
-  margin-bottom: 14px;
+.field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
 }
 
-.alert.ok { background: #16301f; border-color: #2f7a4d; color: #cdf3dd; }
+.field > .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
 
-.alert code { color: inherit; opacity: .75; }
+.field label {
+  font: 600 15px/1.4 var(--font-body);
+}
 
-/* --- events --- */
+.field input,
+.field textarea {
+  min-height: var(--tap);
+  padding: 0 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: 400 16px/1 var(--font-body);
+}
 
-.events { display: flex; flex-direction: column; gap: 12px; }
+.field input:focus-visible,
+.field textarea:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-color: var(--primary);
+}
+
+.field textarea {
+  min-height: 112px;
+  padding: 14px 16px;
+  line-height: 22px;
+  resize: vertical;
+  font-family: var(--font-body);
+}
+
+.field.invalid input {
+  border-color: var(--danger);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 13px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.field-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---- banners ---- */
+
+.banners {
+  display: grid;
+  gap: 10px;
+  padding: 0 var(--gutter);
+  margin-bottom: 16px;
+}
+
+.banner {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  align-items: flex-start;
+}
+
+.banner svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.banner .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner strong {
+  display: block;
+  font: 600 15px/1.4 var(--font-body);
+}
+
+.banner p {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.banner .close {
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.banner-error {
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.banner-error svg,
+.banner-error strong {
+  color: var(--danger);
+}
+
+.banner-warning {
+  background: var(--warning-bg);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+}
+
+.banner-warning svg,
+.banner-warning strong {
+  color: var(--warning);
+}
+
+.banner-success {
+  background: var(--success-bg);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+}
+
+.banner-success svg,
+.banner-success strong {
+  color: var(--success);
+}
+
+.banner-info {
+  background: var(--info-bg);
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+}
+
+.banner-info svg,
+.banner-info strong {
+  color: var(--primary);
+}
+
+/* A rate limit swaps the close button for a live countdown. */
+.banner .countdown-ring {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--warning) 50%, transparent);
+  font: 600 13px/1 var(--font-body);
+  color: var(--warning);
+}
+
+/* ---- cards and lists ---- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+
+/* ---- the catalogue ----
+   A poster, a date chip over it, and the words underneath. The filter row runs
+   to both edges of the screen, which is what tells a thumb it scrolls. */
+
+.filter {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-inline: calc(var(--gutter) * -1);
+  padding: 2px var(--gutter) 16px;
+}
+
+.filter::-webkit-scrollbar {
+  display: none;
+}
+
+.pill {
+  flex: none;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: 600 14px/1 var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pill.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.city-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.city-filter .mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.city-filter .mark svg {
+  width: 17px;
+  height: 17px;
+}
+
+.city-filter select {
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 600 14px/1 var(--font-body);
+  min-height: 40px;
+  padding-right: 4px;
+  cursor: pointer;
+}
+
+.city-filter select:focus-visible {
+  outline: none;
+}
+
+.city-filter:focus-within {
+  border-color: var(--primary);
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.field select {
+  min-height: var(--tap);
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: 400 16px/1 var(--font-body);
+  cursor: pointer;
+}
+
+.field select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-color: var(--primary);
+}
+
+.event .kind {
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin-bottom: 5px;
+}
+
+.tag-kind {
+  background: rgb(255 255 255 / 18%);
+  color: #fff;
+  backdrop-filter: blur(8px);
+}
+
+.poster-hero .tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.event-list {
+  display: grid;
+  gap: 16px;
+}
 
 .event {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 14px;
-  text-align: left;
+  display: block;
   width: 100%;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.event:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* The fallback is the card's own colour, derived from the event id, so a show
+   with no poster still looks like something rather than a hole. */
+.poster {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--hue) 42% 40%),
+    hsl(calc(var(--hue) + 45) 48% 26%)
+  );
+}
+
+.poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
 
-.event:hover { border-color: var(--accent); }
+.poster .initial {
+  font: 700 56px/1 var(--font-display);
+  color: rgb(255 255 255 / 55%);
+}
 
-.event-name { font-weight: 600; margin-bottom: 4px; }
-.event-meta { color: var(--muted); font-size: 13px; }
-.event-started { color: var(--held); font-size: 12px; margin-top: 6px; }
+.date-chip {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: grid;
+  gap: 1px;
+  padding: 7px 11px;
+  border-radius: 12px;
+  text-align: center;
+  background: var(--surface);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 28%);
+}
 
-/* --- seat map --- */
+.date-chip .mon {
+  font: 600 10px/1 var(--font-body);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.date-chip .day {
+  font: 700 21px/1 var(--font-display);
+}
+
+.date-chip .dow {
+  font: 400 10px/1 var(--font-body);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.tag.on-poster {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.event .body {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 14px 16px 16px;
+}
+
+.event .kind,
+.event .name,
+.event .where,
+.event .body .caption {
+  grid-column: 1;
+}
+
+.event .name {
+  font: 700 19px/24px var(--font-display);
+}
+
+.event .where {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.event .chev {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  color: var(--text-muted);
+}
+
+/* ---- one event ---- */
+
+.detail {
+  position: relative;
+  padding-bottom: 24px;
+}
+
+.detail > .back {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  margin: 12px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 28%);
+}
+
+/* The hero runs to both edges, so it is pulled back out of the screen gutter. */
+.poster-hero {
+  aspect-ratio: 3 / 2;
+  max-height: 46vh;
+  border-radius: 0;
+  margin: -24px calc(var(--gutter) * -1) 0;
+  align-items: end;
+}
+
+.poster-hero .scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(transparent 35%, rgb(0 0 0 / 78%));
+}
+
+.poster-hero .over {
+  position: relative;
+  width: 100%;
+  padding: 16px var(--gutter);
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.poster-hero .over h1 {
+  font-size: 30px;
+  line-height: 34px;
+  color: #fff;
+  text-wrap: balance;
+}
+
+.facts {
+  display: grid;
+  gap: 2px;
+  margin: 18px 0;
+}
+
+.fact {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+}
+
+.fact .mark {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--primary);
+}
+
+.fact .mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.fact .value {
+  font: 600 16px/21px var(--font-body);
+}
+
+.avail {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.avail .row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.avail .n {
+  font: 700 30px/1 var(--font-display);
+  color: var(--success);
+}
+
+.avail.none .n {
+  color: var(--danger);
+}
+
+.avail .meter {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.avail .meter i {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+
+.avail p {
+  margin: 10px 0 0;
+}
+
+.prose {
+  margin-top: 26px;
+}
+
+.prose h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.prose p {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  line-height: 24px;
+  white-space: pre-line;
+}
+
+.detail-action {
+  margin-top: 28px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.detail-action .caption,
+.detail-action .muted {
+  text-align: center;
+  margin: 0;
+}
+
+@media (min-width: 1000px) {
+  .event-list {
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  }
+
+  .poster-hero {
+    margin-inline: 0;
+    border-radius: var(--radius-lg);
+    aspect-ratio: 21 / 9;
+  }
+
+  .detail > .back {
+    margin: 16px;
+  }
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tag-started {
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+
+.tag-started::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.tag-live {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+
+.tag-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.tag-cancelled {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+/* ---- empty states ---- */
+
+.empty {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 48px 8px;
+}
+
+.empty svg {
+  width: 120px;
+  height: 90px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.empty h2 {
+  font-size: 22px;
+}
+
+.empty p {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 34ch;
+}
+
+.empty .btn {
+  margin-top: 10px;
+}
+
+/* ---- seat map ----
+   Four states, and each differs in shape and texture as well as colour, so the
+   map still reads with the colour taken away. */
+
+.seatmap-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px var(--gutter);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+}
+
+.seatmap-head .back {
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px;
+  margin-left: -4px;
+}
+
+.seatmap-head h1 {
+  font-size: 24px;
+  line-height: 28px;
+}
+
+.counts {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 15px;
+  padding: 8px 0 18px;
+}
+
+.counts b {
+  color: var(--text);
+}
+
+.counts .none {
+  color: var(--danger);
+}
+
+.counts .stale {
+  color: var(--warning);
+}
 
 .stage {
-  background: var(--panel-2);
-  border-radius: 8px;
-  text-align: center;
-  padding: 10px;
-  color: var(--muted);
-  font-size: 12px;
-  letter-spacing: 2px;
-  margin-bottom: 18px;
+  margin: 0 auto 22px;
+  max-width: 560px;
+  height: 46px;
+  border-radius: 0 0 50% 50%;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--primary) 22%, transparent),
+    transparent
+  );
+  border-bottom: 2px solid var(--primary);
+  display: grid;
+  place-items: center;
+  font: 700 13px/1 var(--font-display);
+  letter-spacing: 0.3em;
+  color: var(--primary);
+}
+
+.seat-grid {
+  display: grid;
+  gap: 6px;
+  justify-content: center;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 
 .seat-row {
   display: flex;
   align-items: center;
+  gap: 6px;
+}
+
+.seat-row .row-label,
+.col-head .col-label {
+  width: 18px;
+  flex: none;
+  text-align: center;
+  color: var(--text-muted);
+  font: 600 13px/1 var(--font-body);
+}
+
+.col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+/* The aisle: a wider gap after the fifth seat, which is what makes a seat map
+   read as a room rather than a spreadsheet. */
+.seat-row .aisle,
+.col-head .aisle {
+  width: 14px;
+  flex: none;
+}
+
+.seat {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: var(--seat-open);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: transform 180ms ease-out, background 180ms ease-out;
+}
+
+.seat svg {
+  width: 13px;
+  height: 13px;
+}
+
+.seat:not(:disabled):hover {
+  transform: scale(1.08);
+  background: color-mix(in srgb, var(--seat-open) 70%, var(--text));
+}
+
+.seat:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Held: dashed outline, translucent, with a clock. Not focusable, no hover. */
+.seat.held {
+  background: var(--seat-held-fill);
+  border: 1px dashed var(--seat-held-line);
+  color: var(--seat-held-line);
+  cursor: default;
+}
+
+/* Sold: diagonal hatch, dark, cannot be tapped. */
+.seat.reserved {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--seat-sold),
+    var(--seat-sold) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  border: 1px solid var(--seat-sold);
+  cursor: default;
+}
+
+/* Yours: filled, a check, and a breathing glow. Only one at a time. */
+.seat.mine {
+  background: var(--seat-mine);
+  color: var(--on-primary);
+  cursor: default;
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 14px 2px color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+}
+
+.seat.just-held {
+  animation: pop 240ms ease-out, breathe 2.4s ease-in-out 240ms infinite;
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.12);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (min-width: 700px) {
+  .seat {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+
+  .seat svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .seat {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+.legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 18px 0 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend i {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: inline-block;
+}
+
+.legend .sw-open {
+  background: var(--seat-open);
+}
+
+.legend .sw-held {
+  border: 1px dashed var(--seat-held-line);
+  background: var(--seat-held-fill);
+}
+
+.legend .sw-sold {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--seat-sold),
+    var(--seat-sold) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+.legend .sw-mine {
+  background: var(--seat-mine);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+/* ---- hold bar ----
+   Pinned to the bottom while a seat is yours. The ring and the digits share one
+   colour, so the state is readable from across a room. */
+
+.holdbar {
+  position: fixed;
+  inset: auto var(--gutter) 92px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  z-index: 15;
+  animation: rise 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+.holdbar .top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.holdbar .ring {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font: 700 20px/1 var(--font-display);
+  /* The ring empties as the time goes. One sweep, no text needed. */
+  background: conic-gradient(
+    var(--ring-color) calc(var(--ring-fraction) * 360deg),
+    var(--line) 0
+  );
+}
+
+.holdbar .ring span {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  display: grid;
+  place-items: center;
+}
+
+.holdbar .what {
+  flex: 1;
+  min-width: 0;
+}
+
+.holdbar .what .name {
+  font: 700 17px/22px var(--font-display);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.holdbar .clock {
+  text-align: right;
+  flex: none;
+}
+
+.holdbar .clock .time {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.holdbar .clock .left {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.holdbar .actions {
+  display: flex;
+  gap: 10px;
+}
+
+.holdbar .actions .btn {
+  flex: 1;
+}
+
+.holdbar .actions .btn-danger {
+  flex: 0 0 38%;
+}
+
+/* Under a minute everything that was amber turns red, together. */
+.holdbar.urgent {
+  --ring-color: var(--danger);
+}
+
+.holdbar.urgent .clock .time,
+.holdbar.urgent .label {
+  color: var(--danger);
+}
+
+.holdbar.ending .ring {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 50%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+/* The prompt that stands where the hold bar will be, before there is one. */
+.prompt {
+  position: fixed;
+  inset: auto var(--gutter) 92px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  z-index: 14;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.prompt .ring {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--primary);
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+  font: 600 16px/1 var(--font-body);
+}
+
+.prompt strong {
+  display: block;
+  font: 700 17px/22px var(--font-display);
+}
+
+.prompt p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ---- waiting list ---- */
+
+.waitlist {
+  position: fixed;
+  inset: auto 0 76px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 22px var(--gutter);
+  z-index: 14;
+}
+
+.waitlist .label {
+  margin-bottom: 6px;
+}
+
+.waitlist h2 {
+  font-size: 26px;
+  margin-bottom: 10px;
+}
+
+.waitlist p {
+  color: var(--text-muted);
+  margin: 0 0 16px;
+}
+
+.waitlist .place {
+  display: flex;
+  align-items: baseline;
   gap: 8px;
   margin-bottom: 10px;
 }
 
-.seat-row-label { width: 18px; color: var(--muted); font-size: 12px; }
-
-/* The grid is the whole seat map: one column per seat, sized to fit whatever the
-   row holds rather than to a fixed count. */
-.seat-row-seats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(34px, 1fr));
-  gap: 8px;
-  flex: 1;
+.waitlist .place .n {
+  font: 700 44px/1 var(--font-display);
+  color: var(--primary);
 }
 
-.seat {
-  aspect-ratio: 1;
-  border-radius: 8px;
-  border: 0;
-  padding: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: #0d0e12;
-  background: var(--available);
-  color: var(--muted);
-}
-
-.seat.available:hover { outline: 2px solid var(--accent); }
-.seat.held { background: var(--held); color: #14151a; cursor: not-allowed; }
-.seat.mine { background: var(--mine); color: #fff; }
-.seat.reserved { background: var(--reserved); color: #fff; cursor: not-allowed; }
-
-.legend {
+.waitlist .dots {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 16px;
-  font-size: 12px;
-  color: var(--muted);
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
 }
 
-.legend span { display: flex; align-items: center; gap: 6px; }
+.waitlist .dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
 
-.swatch { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
-.swatch.available { background: var(--available); }
-.swatch.held { background: var(--held); }
-.swatch.mine { background: var(--mine); }
-.swatch.reserved { background: var(--reserved); }
+.waitlist .dots i.you {
+  width: 20px;
+  height: 20px;
+  background: var(--primary);
+}
 
-/* --- the hold --- */
+.waitlist .dots i.next {
+  border: 2px dashed var(--line-strong);
+  background: none;
+}
 
-.hold-bar {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 16px;
-  width: calc(100% - 32px);
-  max-width: 420px;
-  background: var(--panel);
-  border: 1px solid var(--accent);
-  border-radius: 14px;
-  padding: 12px 14px;
+.waitlist .nobody {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 16px;
+  color: var(--text-muted);
 }
 
-.hold-seat { font-weight: 600; }
-.hold-countdown { color: var(--muted); font-size: 12px; }
-.hold-bar .row { flex: 0 0 auto; }
-.hold-bar button { padding: 10px 14px; }
+.waitlist .notify-on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--success);
+  font-size: 15px;
+  margin-bottom: 14px;
+}
+
+/* ---- tickets ---- */
+
+.ticket {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.ticket .head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px;
+}
+
+.ticket .when {
+  font: 600 13px/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.ticket .name {
+  font: 700 22px/27px var(--font-display);
+  margin-top: 6px;
+}
+
+.ticket .where {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.ticket .seat-no {
+  text-align: right;
+  flex: none;
+}
+
+.ticket .seat-no .label {
+  display: block;
+}
+
+.ticket .seat-no .n {
+  font: 700 34px/1 var(--font-display);
+  color: var(--primary);
+}
+
+/* The perforation. Notches on both sides, dashes between. */
+.ticket .tear {
+  position: relative;
+  border-top: 1px dashed var(--line-strong);
+  margin: 0 18px;
+}
+
+.ticket .tear::before,
+.ticket .tear::after {
+  content: "";
+  position: absolute;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.ticket .tear::before {
+  left: -27px;
+}
+
+.ticket .tear::after {
+  right: -27px;
+}
+
+.ticket .stub {
+  display: flex;
+  gap: 16px;
+  padding: 18px;
+  align-items: center;
+}
+
+.ticket .qr {
+  width: 108px;
+  height: 108px;
+  flex: none;
+  border-radius: 10px;
+  background: #fff;
+  padding: 7px;
+}
+
+.ticket .code {
+  font: 600 19px/1.2 var(--font-body);
+  letter-spacing: 0.06em;
+}
+
+.ticket-past {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  color: var(--text-muted);
+}
+
+.ticket-past .n {
+  font: 700 22px/1 var(--font-display);
+}
+
+/* The full screen ticket is always light: a bright screen scans faster. */
+.ticket-full {
+  background: #faf6f1;
+  color: #1e1714;
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.ticket-full .qr {
+  width: min(78vw, 320px);
+  height: min(78vw, 320px);
+  background: #fff;
+  border-radius: 16px;
+  padding: 12px;
+}
+
+.ticket-full .code {
+  font: 600 22px/1 var(--font-body);
+  letter-spacing: 0.14em;
+}
+
+.ticket-full .rowseat {
+  display: flex;
+  gap: 40px;
+  border-top: 1px dashed #d4c6b8;
+  padding-top: 14px;
+  width: 100%;
+  justify-content: center;
+}
+
+/* ---- sheets and dialogs ---- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 55%);
+  z-index: 30;
+  display: grid;
+  align-items: end;
+}
+
+.sheet {
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 10px var(--gutter) max(22px, env(safe-area-inset-bottom));
+  animation: rise 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-height: 92dvh;
+  overflow-y: auto;
+}
+
+.sheet .grab {
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  margin: 6px auto 18px;
+}
+
+.sheet h2 {
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+
+.sheet > p {
+  color: var(--text-muted);
+  margin: 0 0 18px;
+}
+
+.sheet .actions {
+  display: grid;
+  gap: 10px;
+}
+
+/* ---- manage ---- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.chips:focus-within {
+  border-color: var(--primary);
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 7px 10px;
+  font: 600 15px/1 var(--font-body);
+}
+
+.chip button {
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+
+.chips input {
+  flex: 1;
+  min-width: 110px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 400 16px/1 var(--font-body);
+  min-height: 32px;
+}
+
+.chips input:focus {
+  outline: none;
+}
+
+.stepper {
+  display: flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.stepper button {
+  width: 52px;
+  min-height: 52px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.stepper input {
+  width: 72px;
+  border: 0;
+  border-inline: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  font: 600 18px/1 var(--font-body);
+}
+
+.total {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 18px 0;
+}
+
+.total.over {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.total .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.total .n {
+  font: 700 34px/1 var(--font-display);
+}
+
+.total.over .n {
+  color: var(--danger);
+}
+
+.total .meter {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  margin: 12px 0 8px;
+  overflow: hidden;
+}
+
+.total .meter i {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+
+.total.over .meter i {
+  background: var(--danger);
+}
+
+.preview {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.preview .head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.preview .prow {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.preview .prow .row-label {
+  width: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.preview .prow i {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--seat-open);
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.result-row:last-child {
+  border-bottom: 0;
+}
+
+.badge {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font: 600 13px/1 var(--font-body);
+}
+
+.badge-added {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+.badge-existing {
+  border: 1px solid var(--line-strong);
+  color: var(--text-muted);
+}
+
+.tick {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+  display: grid;
+  place-items: center;
+  margin: 0 auto 18px;
+}
+
+/* ---- desktop ---- */
+
+@media (min-width: 1000px) {
+  .app {
+    padding-bottom: 0;
+  }
+
+  .tabs {
+    position: sticky;
+    inset: 0 0 auto;
+    border-top: 0;
+    border-bottom: 1px solid var(--line);
+    max-width: none;
+    padding: 10px var(--gutter);
+    gap: 8px;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 999px;
+  }
+
+  .tab .pill {
+    width: auto;
+    height: auto;
+    background: none !important;
+  }
+
+  .tab[aria-current="page"] {
+    background: color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+
+  .screen {
+    max-width: 1100px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .holdbar,
+  .prompt,
+  .waitlist {
+    position: static;
+    inset: auto;
+    margin: 20px auto 0;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--line);
+  }
+}
+
+/* Reduced motion keeps the colour and text changes and drops the rest. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

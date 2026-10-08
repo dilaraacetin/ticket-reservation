@@ -14,12 +14,15 @@ import (
 
 // maxBodyBytes caps what a request may send. Without it a caller could stream
 // gigabytes into a JSON decoder and take the process down with it.
-const maxBodyBytes = 8 << 10
+// defaultBodyLimit caps what a request may send when nothing else says so.
+const defaultBodyLimit = 8 << 10
 
 // AccountService is the slice of the account service this package needs.
 type AccountService interface {
+	Account(ctx context.Context, userID string) (*domain.User, error)
 	Register(ctx context.Context, email, password string) (*domain.User, error)
 	Login(ctx context.Context, email, password string) (service.Session, error)
+	Logout(ctx context.Context, tokenID string, expiresAt time.Time) error
 }
 
 type credentialsRequest struct {
@@ -41,7 +44,7 @@ type sessionResponse struct {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
-	credentials, err := decodeJSON[credentialsRequest](w, r)
+	credentials, err := decodeJSON[credentialsRequest](w, r, h.bodyLimit)
 	if err != nil {
 		h.writeError(w, r, err)
 
@@ -63,7 +66,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	credentials, err := decodeJSON[credentialsRequest](w, r)
+	credentials, err := decodeJSON[credentialsRequest](w, r, h.bodyLimit)
 	if err != nil {
 		h.writeError(w, r, err)
 
@@ -91,10 +94,14 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 // DisallowUnknownFields turns a typo into a 400 rather than a silently ignored
 // field: a caller sending "passwrod" should be told, not left wondering why its
 // password never arrived.
-func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
+func decodeJSON[T any](w http.ResponseWriter, r *http.Request, limit int64) (T, error) {
 	var body T
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if limit <= 0 {
+		limit = defaultBodyLimit
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -117,4 +124,61 @@ func invalidBody(err error) error {
 	}
 
 	return errInvalidRequestBody
+}
+
+// logout refuses the caller's own token for whatever is left of its life.
+//
+// It takes no body and names no token: the one being signed out is the one the
+// request arrived with. A caller that could name a token could sign out
+// somebody else's.
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	claims, ok := ClaimsFromContext(r.Context())
+	if !ok {
+		h.writeError(w, r, errUnauthenticated)
+
+		return
+	}
+
+	if err := h.accounts.Logout(r.Context(), claims.TokenID, claims.ExpiresAt); err != nil {
+		h.writeError(w, r, err)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type accountResponse struct {
+	UserID string `json:"userId"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+
+	// EmailVerified decides whether the interface offers seats or asks for the
+	// address to be confirmed first, so it is part of knowing who you are rather
+	// than something to be discovered by being refused.
+	EmailVerified bool `json:"emailVerified"`
+}
+
+// account answers with who the caller is.
+func (h *Handler) account(w http.ResponseWriter, r *http.Request) {
+	userID, err := userIDFrom(r)
+	if err != nil {
+		h.writeError(w, r, err)
+
+		return
+	}
+
+	user, err := h.accounts.Account(r.Context(), userID)
+	if err != nil {
+		h.writeError(w, r, err)
+
+		return
+	}
+
+	h.writeJSON(w, r, http.StatusOK, accountResponse{
+		UserID:        user.ID,
+		Email:         user.Email,
+		Role:          user.Role.String(),
+		EmailVerified: user.EmailVerified(),
+	})
 }

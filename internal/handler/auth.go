@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"ticket-reservation/internal/auth"
 )
 
 const (
@@ -13,14 +15,25 @@ const (
 	bearerPrefix        = "Bearer "
 )
 
-// Verifier turns a token into the user it names.
+// Verifier turns a token into what it says.
 type Verifier interface {
-	Verify(token string, now time.Time) (string, error)
+	Verify(token string, now time.Time) (auth.Claims, error)
+}
+
+// RevocationCheck reports whether a token has been signed out. Optional: a
+// chain built without one trusts every valid signature, which is what the
+// service did before signing out existed.
+type RevocationCheck interface {
+	IsTokenRevoked(ctx context.Context, tokenID string) (bool, error)
 }
 
 // userKey is an unexported type so that no other package can reach or overwrite
 // the authenticated user in a context.
 type userKey struct{}
+
+// claimsKey carries the whole of what the token said, which signing out needs:
+// a token can only be refused by the id it carries.
+type claimsKey struct{}
 
 // Authenticate attaches the caller's identity to the request.
 //
@@ -32,7 +45,7 @@ type userKey struct{}
 //
 // Refusing an anonymous request is then the handlers' job, through userIDFrom,
 // which is the single place identity enters the system.
-func Authenticate(verifier Verifier, clock Clock, logger *slog.Logger) Middleware {
+func Authenticate(verifier Verifier, revocations RevocationCheck, clock Clock, logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, present := bearerToken(r)
@@ -42,7 +55,7 @@ func Authenticate(verifier Verifier, clock Clock, logger *slog.Logger) Middlewar
 				return
 			}
 
-			userID, err := verifier.Verify(token, clock.Now())
+			claims, err := verifier.Verify(token, clock.Now())
 			if err != nil {
 				logger.WarnContext(r.Context(), "rejected a token",
 					"err", err,
@@ -55,9 +68,45 @@ func Authenticate(verifier Verifier, clock Clock, logger *slog.Logger) Middlewar
 				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, userID)))
+			if revocations != nil {
+				revoked, err := revocations.IsTokenRevoked(r.Context(), claims.TokenID)
+				if err != nil {
+					// A check that cannot run refuses rather than waves through.
+					// The tokens on that list are the whole reason it exists, and
+					// a store that is unreachable fails nearly every other
+					// request anyway, so failing closed here costs little and
+					// guesses nothing.
+					writeAPIError(w, r, logger, err)
+
+					return
+				}
+
+				if revoked {
+					logger.WarnContext(r.Context(), "rejected a signed out token",
+						"userId", claims.UserID,
+						"path", r.URL.Path,
+						"requestId", RequestIDFromContext(r.Context()),
+					)
+
+					writeAPIError(w, r, logger, errInvalidToken)
+
+					return
+				}
+			}
+
+			ctx := context.WithValue(r.Context(), userKey{}, claims.UserID)
+			ctx = context.WithValue(ctx, claimsKey{}, claims)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// ClaimsFromContext returns what the caller's token said, if it had one.
+func ClaimsFromContext(ctx context.Context) (auth.Claims, bool) {
+	claims, ok := ctx.Value(claimsKey{}).(auth.Claims)
+
+	return claims, ok
 }
 
 // UserIDFromContext returns the authenticated user, or an empty string.

@@ -67,7 +67,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *movableClock) {
 		RequestID,
 		Logging(discardLogger()),
 		Recovery(discardLogger()),
-		Authenticate(testTokenSigner, clock, discardLogger()),
+		Authenticate(testTokenSigner, nil, clock, discardLogger()),
 		Idempotency(repository.NewMemoryIdempotencyRepository(), clock, 24*time.Hour, discardLogger()),
 	))
 

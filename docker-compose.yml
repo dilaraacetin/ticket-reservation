@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: ticket-reservation-db
     environment:
       POSTGRES_USER: ticket
       POSTGRES_PASSWORD: ticket
@@ -15,6 +14,43 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+
+  # Brings the schema up and exits. A separate service rather than something the
+  # server does on boot, so that two servers starting at once cannot both try to
+  # migrate, and so a failed migration stops the rollout instead of being one
+  # line in a log nobody reads.
+  migrate:
+    build: .
+    image: ticket-reservation:dev
+    entrypoint: ["/migrate", "up"]
+    environment:
+      DATABASE_URL: postgres://ticket:ticket@postgres:5432/ticket_reservation?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: ticket-reservation:dev
+    ports:
+      # The host side is a variable because 8080 is a popular port. The container
+      # side is not: inside its own network it can have the obvious one.
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgres://ticket:ticket@postgres:5432/ticket_reservation?sslmode=disable
+      # No default, and compose stops with this message if it is unset. The
+      # binary would refuse anyway; failing here says so before anything starts.
+      AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET in .env - generate one with openssl rand -base64 32}"
+      SEED_DEMO_DATA: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

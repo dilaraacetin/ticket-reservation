@@ -39,6 +39,14 @@ tags:
     description: Events and their seat maps
   - name: holds
     description: Claiming, confirming and releasing seats
+  - name: waiting list
+    description: Queueing for a seat that is not free yet
+  - name: admin
+    description: Stocking the service with events and seats
+  - name: notifications
+    description: What the service still has to tell the caller
+  - name: push
+    description: Letting a browser be pushed to
   - name: system
     description: Operational endpoints
 
@@ -47,6 +55,10 @@ paths:
     get:
       tags: [system]
       summary: Liveness check
+      description: |
+        Answers without touching anything the service depends on. This is what an
+        orchestrator restarts the process over, and restarting a working process
+        because a database is down helps nobody.
       security: []
       responses:
         "200":
@@ -55,6 +67,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+
+  /ready:
+    get:
+      tags: [system]
+      summary: Readiness check
+      description: |
+        Whether traffic should be sent to this instance right now. With a
+        database configured it is reached with a short deadline; with the
+        in-memory stores there is nothing to reach and the answer is always
+        ready.
+
+        This is what a load balancer takes an instance out of rotation over. The
+        split from `/health` is deliberate: an outage should stop traffic, not
+        start a restart loop that cannot fix it and loses every in-flight request
+        on the way.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: A dependency could not be reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+              example:
+                status: unavailable
+                store: postgres
+                err: the database could not be reached
+
+  /metrics:
+    get:
+      tags: [system]
+      summary: Prometheus metrics
+      description: |
+        The scrape endpoint. Route labels carry the matched pattern rather than
+        the path, so a hold id never becomes a time series of its own.
+
+        Open here, like `/health`. A real deployment would put it on an address
+        the internet cannot reach: it says a good deal about what the process is
+        doing and how much of it there is.
+      security: []
+      responses:
+        "200":
+          description: The current values, in the Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                http_requests_total{method="POST",route="POST /events/{eventID}/seats/{seatID}/hold",status="409"} 1
+                api_failures_total{code="seat_not_available"} 1
+                stream_subscribers 1
 
   /auth/register:
     post:
@@ -142,6 +211,119 @@ paths:
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
+  /auth/verify:
+    post:
+      tags: [accounts]
+      summary: Confirm an email address
+      description: |
+        Follows the link sent on registration. The token works once and stops
+        working after a day.
+
+        A POST rather than a GET on the link itself, because a mailbox scanner
+        or a link preview fetching a GET would spend a single-use token before
+        the person ever clicked it. The page behind the link reads the token out
+        of the query string and sends it here.
+
+        Until an address is confirmed nothing is emailed to it. Anybody can
+        register with somebody else's address, and sending to it would make this
+        service a way to post mail to strangers.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "204":
+          description: The address is confirmed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          description: |
+            Unknown, already spent, or expired. One answer for all three:
+            telling them apart would say whether a token was ever real.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: verification_not_usable
+                  message: that verification link is no longer valid
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/verify/resend:
+    post:
+      tags: [accounts]
+      summary: Send the confirmation link again
+      description: |
+        Needs a token, so it can only ask for the caller's own address. An
+        endpoint that took an address would send mail to anybody who was named.
+
+        Earlier links are left working: somebody who clicks the first message
+        after asking for a second should not be told their link is broken.
+
+        Answers 202 rather than 204, because the message is queued rather than
+        already gone.
+      responses:
+        "202":
+          description: A fresh link has been queued
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: The address is already confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: already_verified
+                  message: the address is already verified
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/logout:
+    post:
+      tags: [accounts]
+      summary: Sign out
+      description: |
+        Refuses the caller's own token for whatever is left of its life.
+
+        It takes no body and names no token: the one being signed out is the one
+        the request arrived with. A caller that could name a token could sign out
+        somebody else's.
+
+        Only that token is affected. Signing in twice gives two tokens, and this
+        ends one of them, which is what makes signing out of one device possible.
+        The record is kept only until the token would have expired anyway.
+      responses:
+        "204":
+          description: The token will no longer be accepted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "501":
+          description: |
+            This deployment has nothing wired in to remember a signed out token.
+            Not a failure: the service would otherwise be reporting that it had
+            done something it cannot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: logout_unavailable
+                  message: signing out is not available
+
   /events:
     get:
       tags: [events]
@@ -157,6 +339,29 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Event"
+
+  /events/{eventID}:
+    get:
+      tags: [events]
+      summary: Get one event
+      description: |
+        Everything the detail page shows, including how many seats are still
+        open. The counts are made here rather than left to the caller, because
+        counting from outside means fetching every seat in the hall.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "200":
+          description: The event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /events/{eventID}/seats:
     get:
@@ -198,8 +403,14 @@ paths:
 
         - `seat_changed` — a seat's status is no longer what you last saw. Public,
           so every watcher of the event gets it.
-        - `turn_came` — a seat you were waiting for is now held for you. Sent only
-          to the caller it concerns, which needs a token.
+        - `event_cancelled` — this event has been withdrawn from sale. Public,
+          so every watcher gets it; the people who hold tickets also get a stored
+          notice they will find whenever they next look.
+        - `turn_came` — a seat you were waiting for is now held for you. It
+          carries the `holdId` and the `expiresAt` of the hold that was made, so
+          the client can confirm it without asking. Sent only to the caller it
+          concerns, so this stream has to be opened with a token; `EventSource`
+          cannot send one, which is why the bundled page reads it with `fetch`.
 
         Comment lines are sent every 25 seconds to keep proxies from closing an
         idle connection. Browsers reconnect on their own when it drops.
@@ -228,6 +439,301 @@ paths:
                 error:
                   code: stream_unavailable
                   message: live updates are not available
+
+  /admin/events:
+    post:
+      tags: [admin]
+      summary: Create an event
+      description: |
+        Requires an administrator. The role is read from storage on every
+        request rather than carried in the token, so taking it away takes effect
+        at once.
+
+        The id is assigned here rather than taken from the caller, so two people
+        stocking the service at the same time cannot collide over a name they
+        both thought was free. It comes back in the body and in `Location`.
+
+        There is no endpoint that makes an administrator. The first one is made
+        with the `admin` command, which needs database access — an endpoint that
+        can create an administrator is an endpoint that can be talked into
+        creating one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewEvent"
+      responses:
+        "201":
+          description: The event, with the id it was given
+          headers:
+            Location:
+              schema:
+                type: string
+              description: Where the new event can be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: An event with that id already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: event_exists
+                  message: an event with that id already exists
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /admin/events/{eventID}:
+    patch:
+      tags: [admin]
+      summary: Change an event
+      description: |
+        Every field is optional: a caller fixing a typo in the venue should not
+        have to repeat the name and the start time, and repeating them is how one
+        of them gets sent back stale.
+
+        A cancelled event cannot be edited. It is a record of something that is
+        not happening, and editing it would quietly turn it into a different one.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventChanges"
+      responses:
+        "200":
+          description: The event as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The event is cancelled, so it is no longer editable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: event_already_cancelled
+                  message: the event is already cancelled
+
+    delete:
+      tags: [admin]
+      summary: Remove an event outright
+      description: |
+        Refused while any of the event's seats is held or sold. Removing a
+        mistake is one thing; removing something people have tickets to is
+        another, and cancelling is what that is for.
+
+        The check and the delete are one statement, so a seat that stops being
+        available in between cannot slip through.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "204":
+          description: The event is gone
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Seats of this event are held or sold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: event_in_use
+                  message: the event has seats that are held or sold
+
+  /admin/events/{eventID}/cancel:
+    post:
+      tags: [admin]
+      summary: Withdraw an event from sale
+      description: |
+        Marks the event rather than removing it, so the people holding tickets to
+        it can still see what happened. It stays in the catalogue with
+        `cancelled: true`.
+
+        No new seats may be claimed afterwards. Anyone who already holds one may
+        still confirm it: they were part way through a purchase when this
+        happened, and taking it away from them is a worse answer than letting
+        them finish.
+
+        Takes no body. There is one thing to say and the path says which event.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "200":
+          description: The event, now withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It was already withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: event_already_cancelled
+                  message: the event is already cancelled
+
+  /admin/events/{eventID}/seats:
+    post:
+      tags: [admin]
+      summary: Add rows of seats to an event
+      description: |
+        Requires an administrator. Builds the given rows, each numbered from one
+        to `seatsPerRow`, so `rows: ["A","B"]` with `seatsPerRow: 3` makes A1, A2,
+        A3, B1, B2 and B3.
+
+        Seats that already exist are left alone, so adding a row twice does not
+        disturb one that is already held or sold. At most 2000 seats in one
+        request: without a limit one mistyped number becomes millions of rows.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewSeats"
+      responses:
+        "201":
+          description: How many seats were built
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eventId, created]
+                properties:
+                  eventId:
+                    type: string
+                    example: event-1
+                  created:
+                    type: integer
+                    example: 20
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /events/{eventID}/waiting-list:
+    get:
+      tags: [waiting list]
+      summary: Where the caller stands in the queue
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "200":
+          description: The caller's place
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaitingListPlace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: The caller is not in this queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: not_waiting
+                  message: the user is not on the waiting list
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+    post:
+      tags: [waiting list]
+      summary: Take a place in the queue
+      description: |
+        Needs a confirmed email address, the same as holding a seat does. The
+        rule has to be the same in both places: somebody who cannot be given a
+        seat would otherwise reach the front of the queue, be refused, and be
+        put back, blocking everybody behind them.
+
+        When a seat of this event comes free, whoever has waited longest is given
+        a hold on it automatically and told over the stream with a `turn_came`
+        notice. That hold is an ordinary one: it runs out like any other, and the
+        seat then goes to the next person.
+
+        Joining a queue the caller is already in is not an error and does not
+        cost them the time they have already waited, so this answers 200 rather
+        than 201.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "200":
+          description: The caller's place in the queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaitingListPlace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+    delete:
+      tags: [waiting list]
+      summary: Give up the caller's place
+      description: |
+        Answers 204 whether or not the caller was in the queue, since either way
+        they are out of it now.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      responses:
+        "204":
+          description: The caller is not in the queue
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /events/{eventID}/seats/{seatID}/hold:
     post:
@@ -274,6 +780,271 @@ paths:
                   message: seat is not available
         "422":
           $ref: "#/components/responses/KeyReused"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /notifications:
+    get:
+      tags: [notifications]
+      summary: What the caller has not been told yet
+      description: |
+        The caller's notices, newest first, read and unread together. `unread` is
+        given separately so a page can show a count without walking the list,
+        which is the one thing it needs before anybody opens it.
+
+        Stored rather than only pushed down the stream, because the point of
+        being told is that you were not looking: a notice that only reaches
+        people who happen to have the page open is not a notification. The event
+        name is carried in each notice, since the event may have been removed by
+        the time anyone reads it.
+      responses:
+        "200":
+          description: The caller's notices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unread, notifications]
+                properties:
+                  unread:
+                    type: integer
+                    example: 1
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /notifications/read:
+    post:
+      tags: [notifications]
+      summary: Mark everything as read
+      description: |
+        Marks all of the caller's unread notices and reports how many that was.
+        All of them rather than one at a time, because that is what opening the
+        list means.
+
+        Takes no body and names no notice: it marks the caller's own, and a
+        caller that could name one could mark somebody else's.
+      responses:
+        "200":
+          description: How many were marked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [markedRead]
+                properties:
+                  markedRead:
+                    type: integer
+                    example: 3
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /push/key:
+    get:
+      tags: [push]
+      summary: The public VAPID key
+      description: |
+        What a browser needs before it can ask anybody for permission. Open,
+        because the key is public by definition.
+
+        These routes only exist when the deployment has a VAPID pair. Offering a
+        subscription that could never be pushed to would be a button that does
+        nothing.
+      security: []
+      responses:
+        "200":
+          description: The key
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey]
+                properties:
+                  publicKey:
+                    type: string
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /push/subscriptions:
+    post:
+      tags: [push]
+      summary: Let this browser be pushed to
+      description: |
+        Takes what the browser's `PushSubscription` serialises to, so the client
+        can send what it was given rather than taking it apart first.
+
+        One subscription per browser, not per person: somebody with a phone and
+        a laptop has two, and allowing notifications on one says nothing about
+        the other. The same browser subscribing again replaces its keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscription"
+      responses:
+        "204":
+          description: This browser will be pushed to
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+    delete:
+      tags: [push]
+      summary: Stop pushing to this browser
+      description: |
+        Names the endpoint in the body, because a person has one per browser and
+        this is the one saying stop.
+
+        Only the caller's own. An endpoint is long and unguessable but it is not
+        a secret, and without the check anybody holding one could switch
+        somebody else's notifications off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint:
+                  type: string
+      responses:
+        "204":
+          description: This browser will not be pushed to
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: That subscription belongs to another account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: not_your_subscription
+                  message: that subscription belongs to another account
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /account:
+    get:
+      tags: [accounts]
+      summary: Who the caller is
+      description: |
+        What the interface needs to decide which parts of itself to show: whether
+        to offer the administrative section, and whether to ask for the address
+        to be confirmed. Being refused is a poor way to find either out.
+      responses:
+        "200":
+          description: The caller's account
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, email, role, emailVerified]
+                properties:
+                  userId:
+                    type: string
+                  email:
+                    type: string
+                  role:
+                    type: string
+                    enum: [customer, admin]
+                  emailVerified:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /tickets/{ticketCode}/qr.png:
+    get:
+      tags: [holds]
+      summary: The ticket as a scannable image
+      description: |
+        Rendered here rather than in the browser, because encoding a QR is error
+        correction and bit placement, and a page that gets it subtly wrong
+        produces a code that scans everywhere except at the door.
+
+        Only the caller's own. A code belonging to somebody else answers 404
+        rather than their ticket, and the same answer covers a code that does not
+        exist — otherwise this would be a way to check whether one is real.
+      parameters:
+        - name: ticketCode
+          in: path
+          required: true
+          schema:
+            type: string
+          example: SH-7K2Q-94XD
+      responses:
+        "200":
+          description: The image
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such ticket of the caller's
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: ticket_not_found
+                  message: no such ticket
+
+  /tickets:
+    get:
+      tags: [holds]
+      summary: What the caller is holding and has reserved
+      description: |
+        Everything this caller has, across every event: the seats held right now
+        and the ones already confirmed, kept apart because they are different
+        things to read — one is a countdown, the other is a ticket.
+
+        The seat map never says who holds or owns a seat, so without this a
+        confirmed seat is invisible to the person who owns it. It is also how a
+        page reloaded mid hold recovers: the hold id and the time left come back
+        here, and the seat can be confirmed without starting again.
+
+        A hold that has run out is left out even if the sweeper has not been
+        round yet, because showing it would promise a seat that is already free.
+      responses:
+        "200":
+          description: The caller's seats
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [holds, reservations]
+                properties:
+                  holds:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Ticket"
+                  reservations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
@@ -525,6 +1296,212 @@ components:
               message: hold not found
 
   schemas:
+    PushSubscription:
+      type: object
+      required: [endpoint, keys]
+      description: |
+        The shape a browser's PushSubscription serialises to. Send it as the
+        browser gave it.
+      properties:
+        endpoint:
+          type: string
+          description: The URL the browser's push service listens on.
+        keys:
+          type: object
+          required: [p256dh, auth]
+          description: |
+            The browser's own keys. The payload is encrypted to them, so the push
+            service carrying it cannot read it.
+          properties:
+            p256dh:
+              type: string
+            auth:
+              type: string
+
+    Notification:
+      type: object
+      required: [id, kind, eventId, eventName, createdAt, read]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [event_cancelled]
+          description: A closed set, so a reader never meets a kind nothing is written for.
+        eventId:
+          type: string
+          example: event-1
+        eventName:
+          type: string
+          description: Carried in the notice, because the event may be gone by now.
+          example: Radiohead
+        seatId:
+          type: string
+          description: |
+            Present when the notice is about one seat. Left out for somebody who
+            was on the waiting list rather than holding a seat.
+          example: A1
+        createdAt:
+          type: string
+          format: date-time
+        read:
+          type: boolean
+          example: false
+
+    Ticket:
+      type: object
+      required: [eventId, eventName, venue, startsAt, seatId, row, number, status]
+      description: |
+        A seat the caller has, carrying enough of its event to be shown without a
+        second request. The hold fields are present only while the seat is held.
+      properties:
+        eventId:
+          type: string
+          example: event-1
+        eventName:
+          type: string
+          example: Radiohead
+        venue:
+          type: string
+          example: Volkswagen Arena
+        startsAt:
+          type: string
+          format: date-time
+        seatId:
+          type: string
+          example: A1
+        row:
+          type: string
+          example: A
+        number:
+          type: integer
+          example: 1
+        status:
+          $ref: "#/components/schemas/SeatStatus"
+        ticketCode:
+          type: string
+          description: Present once the seat is confirmed. What is shown and scanned at the door.
+          example: SH-7K2Q-94XD
+        holdId:
+          type: string
+          description: Present while held. What the confirm endpoint takes.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Present while held.
+        expiresInSeconds:
+          type: integer
+          description: Present while held, for the countdown.
+          example: 240
+
+    EventDetails:
+      type: object
+      description: |
+        The descriptive half of an event. On an edit these behave differently
+        from the fields above: a field left out is kept, and a field sent empty
+        is cleared. A description that may legitimately be blank cannot use
+        blank to mean "unchanged".
+      properties:
+        city:
+          type: string
+          example: Istanbul
+        category:
+          $ref: "#/components/schemas/Category"
+        imageUrl:
+          type: string
+          description: http or https. Rendered as an image source.
+          example: https://images.example.com/radiohead.jpg
+        description:
+          type: string
+        rules:
+          type: string
+
+    NewEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventDetails"
+        - type: object
+          required: [name, venue, startsAt, city]
+          properties:
+            name:
+              type: string
+              example: Radiohead
+            venue:
+              type: string
+              example: Volkswagen Arena
+            startsAt:
+              type: string
+              format: date-time
+              description: Stored to the second; anything finer is noise on a start time.
+              example: "2026-11-14T20:30:00Z"
+
+    EventChanges:
+      description: |
+        Every field is optional. A name, venue or start time left out or sent
+        empty is left as it was; a descriptive field left out is kept, and one
+        sent empty is cleared.
+      allOf:
+        - $ref: "#/components/schemas/EventDetails"
+        - type: object
+          properties:
+            name:
+              type: string
+              example: Radiohead
+            venue:
+              type: string
+              example: Volkswagen Arena
+            startsAt:
+              type: string
+              format: date-time
+              example: "2026-11-14T21:00:00Z"
+
+    NewSeats:
+      type: object
+      required: [rows, seatsPerRow]
+      properties:
+        rows:
+          type: array
+          items:
+            type: string
+          description: Row labels. The same label twice is refused, because it would build the same seat twice.
+          example: ["A", "B"]
+        seatsPerRow:
+          type: integer
+          minimum: 1
+          example: 10
+
+    Readiness:
+      type: object
+      required: [status, store]
+      properties:
+        status:
+          type: string
+          enum: [ready, unavailable]
+        store:
+          type: string
+          enum: [memory, postgres]
+        err:
+          type: string
+          description: |
+            Why it is not ready, in general terms. Never carries the connection
+            string or anything out of it.
+          example: the database could not be reached
+
+    WaitingListPlace:
+      type: object
+      required: [eventId, userId, position]
+      properties:
+        eventId:
+          type: string
+          example: event-1
+        userId:
+          type: string
+          example: user-3
+        position:
+          type: integer
+          minimum: 1
+          description: Where the caller stands, counting from one.
+          example: 2
+
     Credentials:
       type: object
       required: [email, password]
@@ -587,7 +1564,7 @@ components:
 
     Event:
       type: object
-      required: [id, name, venue, startsAt, hasStarted]
+      required: [id, name, venue, startsAt, hasStarted, cancelled]
       properties:
         id:
           type: string
@@ -605,6 +1582,56 @@ components:
           type: boolean
           description: Computed at request time from the server's clock
           example: false
+        cancelled:
+          type: boolean
+          description: |
+            A withdrawn event stays in the catalogue rather than disappearing, so
+            that somebody holding a ticket to it can see what happened.
+          example: false
+        cancelledAt:
+          type: string
+          format: date-time
+          description: Present only once the event has been withdrawn.
+        city:
+          type: string
+          description: What the catalogue is filtered by.
+          example: Istanbul
+        category:
+          $ref: "#/components/schemas/Category"
+        imageUrl:
+          type: string
+          description: The poster. Empty when the event has none.
+          example: https://images.example.com/radiohead.jpg
+        description:
+          type: string
+          example: Touring In Rainbows, with a string section for the second half.
+        rules:
+          type: string
+          example: Doors at 19:00. Under 16s must come with an adult.
+
+    EventDetail:
+      allOf:
+        - $ref: "#/components/schemas/Event"
+        - type: object
+          required: [available, total]
+          properties:
+            available:
+              type: integer
+              description: Seats that can be taken right now, expired holds counted as free.
+              example: 53
+            total:
+              type: integer
+              example: 80
+
+    Category:
+      type: string
+      description: |
+        The kind of event, and the catalogue's main filter. A closed set: one
+        venue typing "Stand-up" and another "stand up" would otherwise split one
+        category into two that each find half the events. An event created
+        without one is stored as `other`.
+      enum: [concert, theatre, comedy, festival, sport, family, other]
+      example: concert
 
     SeatStatus:
       type: string
@@ -704,6 +1731,22 @@ components:
                 - event_not_found
                 - seat_not_found
                 - hold_not_found
+                - not_waiting
+                - ticket_not_found
+                - client_closed
+                - not_permitted
+                - event_exists
+                - event_in_use
+                - event_cancelled
+                - event_already_cancelled
+                - invalid_event
+                - invalid_seat_map
+                - logout_unavailable
+                - invalid_push_subscription
+                - not_your_subscription
+                - verification_not_usable
+                - already_verified
+                - email_not_verified
                 - seat_not_available
                 - seat_not_held
                 - hold_expired
@@ -722,6 +1765,7 @@ components:
                 - idempotency_key_reused
                 - user_id_required
                 - hold_id_required
+                - event_id_required
                 - invalid_hold_duration
                 - internal_error
             message:

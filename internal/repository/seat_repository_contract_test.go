@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,13 +24,13 @@ func testTime() time.Time {
 	return time.Date(2026, 8, 17, 20, 0, 0, 0, time.UTC)
 }
 
-type seatRepositoryFactory func(t *testing.T, eventID string, seats ...*domain.Seat) SeatRepository
+type seatRepositoryFactory func(t testing.TB, eventID string, seats ...*domain.Seat) SeatRepository
 
-func newMemorySeats(_ *testing.T, _ string, seats ...*domain.Seat) SeatRepository {
+func newMemorySeats(_ testing.TB, _ string, seats ...*domain.Seat) SeatRepository {
 	return NewMemorySeatRepository(seats...)
 }
 
-func newPostgresSeats(t *testing.T, eventID string, seats ...*domain.Seat) SeatRepository {
+func newPostgresSeats(t testing.TB, eventID string, seats ...*domain.Seat) SeatRepository {
 	t.Helper()
 
 	pool := seededPool(t, eventID)
@@ -42,7 +43,7 @@ func newPostgresSeats(t *testing.T, eventID string, seats ...*domain.Seat) SeatR
 	return repo
 }
 
-func newOptimisticSeats(t *testing.T, eventID string, seats ...*domain.Seat) SeatRepository {
+func newOptimisticSeats(t testing.TB, eventID string, seats ...*domain.Seat) SeatRepository {
 	t.Helper()
 
 	pool := seededPool(t, eventID)
@@ -55,7 +56,7 @@ func newOptimisticSeats(t *testing.T, eventID string, seats ...*domain.Seat) Sea
 	return repo
 }
 
-func seededPool(t *testing.T, eventID string) *pgxpool.Pool {
+func seededPool(t testing.TB, eventID string) *pgxpool.Pool {
 	t.Helper()
 
 	pool := newTestPool(t)
@@ -221,7 +222,7 @@ func runSeatRepositoryContract(t *testing.T, newRepo seatRepositoryFactory) {
 		seedHold(t, repo, eventID, "A1", holdID, testUser, holdTTL)
 
 		err := repo.UpdateSeatByHoldID(t.Context(), holdID, func(seat *domain.Seat) error {
-			return seat.Confirm(testUser, testTime().Add(time.Minute))
+			return seat.Confirm(testUser, "SH-TEST-CODE", testTime().Add(time.Minute))
 		})
 		if err != nil {
 			t.Fatalf("UpdateSeatByHoldID() error = %v", err)
@@ -248,7 +249,7 @@ func runSeatRepositoryContract(t *testing.T, newRepo seatRepositoryFactory) {
 		seedHold(t, repo, eventID, "A1", holdID, testUser, holdTTL)
 
 		err := repo.UpdateSeatByHoldID(t.Context(), holdID, func(seat *domain.Seat) error {
-			if err := seat.Confirm(testUser, testTime()); err != nil {
+			if err := seat.Confirm(testUser, "SH-TEST-CODE", testTime()); err != nil {
 				return err
 			}
 
@@ -293,12 +294,16 @@ func runSeatRepositoryContract(t *testing.T, newRepo seatRepositoryFactory) {
 		seedHold(t, repo, eventID, "A1", eventID+"-short", testUser, time.Minute)
 		seedHold(t, repo, eventID, "A2", eventID+"-long", testUser, time.Hour)
 
-		expired, err := repo.ExpireHolds(t.Context(), now.Add(2*time.Minute))
+		freed, err := repo.ExpireHolds(t.Context(), now.Add(2*time.Minute))
 		if err != nil {
 			t.Fatalf("ExpireHolds() error = %v", err)
 		}
-		if expired != 1 {
-			t.Errorf("expired = %d, want 1", expired)
+
+		// Naming the seats matters as much as counting them: the waiting list is
+		// offered exactly what comes back here.
+		want := []domain.SeatRef{{EventID: eventID, SeatID: "A1"}}
+		if !slices.Equal(freed, want) {
+			t.Errorf("freed = %v, want %v", freed, want)
 		}
 
 		wantStatus := map[string]domain.SeatStatus{
@@ -325,12 +330,135 @@ func runSeatRepositoryContract(t *testing.T, newRepo seatRepositoryFactory) {
 
 		seedHold(t, repo, eventID, "A1", eventID+"-hold", testUser, holdTTL)
 
-		expired, err := repo.ExpireHolds(t.Context(), now.Add(holdTTL))
+		freed, err := repo.ExpireHolds(t.Context(), now.Add(holdTTL))
 		if err != nil {
 			t.Fatalf("ExpireHolds() error = %v", err)
 		}
-		if expired != 1 {
-			t.Errorf("expired = %d, want 1", expired)
+
+		want := []domain.SeatRef{{EventID: eventID, SeatID: "A1"}}
+		if !slices.Equal(freed, want) {
+			t.Errorf("freed = %v, want %v", freed, want)
+		}
+	})
+
+	// Adding a row twice must not reset a seat that is already held or sold,
+	// because stocking a hall is something an administrator does more than once.
+	// The code is the ticket. A store that confirmed a seat without keeping it
+	// would hand somebody a seat they cannot get through the door with.
+	t.Run("a confirmed seat keeps its ticket code", func(t *testing.T) {
+		eventID := uniqueEventID(t)
+		repo := newRepo(t, eventID, domain.NewSeat(eventID, "A1", "A", 1))
+		now := testTime()
+
+		seedHold(t, repo, eventID, "A1", eventID+"-hold", testUser, holdTTL)
+
+		err := repo.UpdateSeat(t.Context(), eventID, "A1", func(seat *domain.Seat) error {
+			return seat.Confirm(testUser, "SH-7K2Q-94XD", now)
+		})
+		if err != nil {
+			t.Fatalf("confirming failed: %v", err)
+		}
+
+		stored, err := repo.GetSeat(t.Context(), eventID, "A1")
+		if err != nil {
+			t.Fatalf("GetSeat() error = %v", err)
+		}
+		if stored.TicketCode != "SH-7K2Q-94XD" {
+			t.Errorf("TicketCode = %q, want it kept", stored.TicketCode)
+		}
+	})
+
+	t.Run("CreateSeats adds seats and leaves existing ones alone", func(t *testing.T) {
+		eventID := uniqueEventID(t)
+		repo := newRepo(t, eventID, domain.NewSeat(eventID, "A1", "A", 1))
+
+		seedHold(t, repo, eventID, "A1", eventID+"-held", testUser, holdTTL)
+
+		added := []*domain.Seat{
+			domain.NewSeat(eventID, "A1", "A", 1),
+			domain.NewSeat(eventID, "A2", "A", 2),
+		}
+		created, err := repo.CreateSeats(t.Context(), added...)
+		if err != nil {
+			t.Fatalf("CreateSeats() error = %v", err)
+		}
+
+		// A1 was already there, so only A2 is new. Counting both would tell an
+		// administrator a row block had been added when half of it already was.
+		if created != 1 {
+			t.Errorf("created = %d, want 1; only A2 was new", created)
+		}
+
+		held, err := repo.GetSeat(t.Context(), eventID, "A1")
+		if err != nil {
+			t.Fatalf("GetSeat(A1) error = %v", err)
+		}
+		if held.Status != domain.StatusHeld || held.HeldBy != testUser {
+			t.Errorf("A1 is %v held by %q, want it untouched", held.Status, held.HeldBy)
+		}
+
+		fresh, err := repo.GetSeat(t.Context(), eventID, "A2")
+		if err != nil {
+			t.Fatalf("GetSeat(A2) error = %v", err)
+		}
+		if fresh.Status != domain.StatusAvailable {
+			t.Errorf("A2 is %v, want %v", fresh.Status, domain.StatusAvailable)
+		}
+	})
+
+	// Until this existed a confirmed seat was invisible to the person who owned
+	// it: the seat map does not say who holds or owns a seat, so nothing pointed
+	// back to it.
+	t.Run("ListSeatsForUser returns what one person holds and owns", func(t *testing.T) {
+		eventID := uniqueEventID(t)
+		repo := newRepo(t, eventID,
+			domain.NewSeat(eventID, "A1", "A", 1),
+			domain.NewSeat(eventID, "A2", "A", 2),
+			domain.NewSeat(eventID, "A3", "A", 3),
+		)
+		now := testTime()
+
+		// A1 held by us, A2 confirmed by us, A3 held by somebody else.
+		seedHold(t, repo, eventID, "A1", eventID+"-mine", testUser, holdTTL)
+		seedHold(t, repo, eventID, "A2", eventID+"-confirm", testUser, holdTTL)
+		seedHold(t, repo, eventID, "A3", eventID+"-theirs", "user-2", holdTTL)
+
+		err := repo.UpdateSeat(t.Context(), eventID, "A2", func(seat *domain.Seat) error {
+			return seat.Confirm(testUser, "SH-TEST-CODE", now)
+		})
+		if err != nil {
+			t.Fatalf("confirming A2 failed: %v", err)
+		}
+
+		seats, err := repo.ListSeatsForUser(t.Context(), testUser)
+		if err != nil {
+			t.Fatalf("ListSeatsForUser() error = %v", err)
+		}
+
+		got := make([]string, 0, len(seats))
+		for _, seat := range seats {
+			got = append(got, seat.ID+":"+seat.Status.String())
+		}
+
+		want := []string{"A1:held", "A2:reserved"}
+		if !slices.Equal(got, want) {
+			t.Errorf("seats = %v, want %v; A3 belongs to somebody else", got, want)
+		}
+	})
+
+	t.Run("ListSeatsForUser returns an empty slice, not nil", func(t *testing.T) {
+		eventID := uniqueEventID(t)
+		repo := newRepo(t, eventID, domain.NewSeat(eventID, "A1", "A", 1))
+
+		seats, err := repo.ListSeatsForUser(t.Context(), "nobody")
+		if err != nil {
+			t.Fatalf("ListSeatsForUser() error = %v", err)
+		}
+		if seats == nil {
+			t.Error("got nil, want an empty slice so the API answers [] rather than null")
+		}
+		if len(seats) != 0 {
+			t.Errorf("got %d seats for somebody with none", len(seats))
 		}
 	})
 
