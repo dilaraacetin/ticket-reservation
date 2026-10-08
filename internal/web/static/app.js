@@ -1,7 +1,7 @@
 // SeatHold. The router decides what is on the page; everything else hands it a
 // node and gets out of the way.
 
-import { api, ApiError, hasToken, openStream, setToken } from "./api.js";
+import { api, ApiError, hasToken, newIdempotencyKey, openStream, setToken } from "./api.js";
 import { banner, clearBanners, dismissBanner, el, icon, showError } from "./ui.js";
 import {
   accountView,
@@ -470,7 +470,7 @@ async function holdSeat(seat) {
     const hold = await api(
       "POST",
       `/events/${encodeURIComponent(state.event.id)}/seats/${encodeURIComponent(seat.id)}/hold`,
-      { idempotencyKey: crypto.randomUUID() },
+      { idempotencyKey: newIdempotencyKey() },
     );
 
     state.hold = {
@@ -501,7 +501,7 @@ async function confirmHold() {
     const reservation = await api("POST", `/holds/${encodeURIComponent(state.hold.holdId)}/confirm`, {
       // A key, so a retry after a lost answer replays the first one rather than
       // reporting that the hold has gone.
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: newIdempotencyKey(),
     });
 
     dropHold();
@@ -767,5 +767,14 @@ async function start() {
 
   await go(hasToken() ? "events" : "auth");
 }
+
+// Nothing else catches a failure that is not an ApiError, so one thrown inside a
+// click handler becomes an unhandled rejection and the tap simply does nothing.
+// That is how a missing browser API stayed invisible: the page looked unbroken
+// and said nothing. Anything that gets this far is a bug, so it says so.
+window.addEventListener("unhandledrejection", (event) => {
+  console.error(event.reason);
+  banner("error", "Something went wrong", "The page hit an unexpected error. Reloading usually clears it.");
+});
 
 start();
