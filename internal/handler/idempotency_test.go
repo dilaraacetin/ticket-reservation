@@ -34,7 +34,7 @@ func withIdempotency(t *testing.T, next http.Handler, store IdempotencyStore) ht
 	t.Helper()
 
 	return Chain(next,
-		Authenticate(testTokenSigner, fixedClock{now: testTime()}, discardLogger()),
+		Authenticate(testTokenSigner, nil, fixedClock{now: testTime()}, discardLogger()),
 		Idempotency(store, fixedClock{now: testTime()}, testKeyTTL, discardLogger()),
 	)
 }

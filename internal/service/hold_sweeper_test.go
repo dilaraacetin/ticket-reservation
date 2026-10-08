@@ -39,8 +39,16 @@ func (r failingSeatRepository) UpdateSeatByHoldID(
 	return r.err
 }
 
-func (r failingSeatRepository) ExpireHolds(context.Context, time.Time) (int, error) {
+func (r failingSeatRepository) ExpireHolds(context.Context, time.Time) ([]domain.SeatRef, error) {
+	return nil, r.err
+}
+
+func (r failingSeatRepository) CreateSeats(context.Context, ...*domain.Seat) (int, error) {
 	return 0, r.err
+}
+
+func (r failingSeatRepository) ListSeatsForUser(context.Context, string) ([]*domain.Seat, error) {
+	return nil, r.err
 }
 
 func newTestSweeper(interval time.Duration) (*HoldSweeper, *fakeClock, *ReservationService) {
@@ -72,19 +80,19 @@ func TestHoldSweeper_Sweep(t *testing.T) {
 			}
 		}
 
-		if got := sweeper.Sweep(ctx); got != 0 {
-			t.Errorf("Sweep() before expiry = %d, want 0", got)
+		if got := sweeper.Sweep(ctx); len(got) != 0 {
+			t.Errorf("Sweep() before expiry freed %v, want nothing", got)
 		}
 
 		clock.Advance(DefaultHoldTTL)
 
-		if got := sweeper.Sweep(ctx); got != 2 {
-			t.Errorf("Sweep() after expiry = %d, want 2", got)
+		if got := sweeper.Sweep(ctx); len(got) != 2 {
+			t.Errorf("Sweep() after expiry freed %v, want 2 seats", got)
 		}
 
 		// Nothing is left to release, so a second pass is a no-op.
-		if got := sweeper.Sweep(ctx); got != 0 {
-			t.Errorf("second Sweep() = %d, want 0", got)
+		if got := sweeper.Sweep(ctx); len(got) != 0 {
+			t.Errorf("second Sweep() freed %v, want nothing", got)
 		}
 	})
 
@@ -96,8 +104,8 @@ func TestHoldSweeper_Sweep(t *testing.T) {
 			discardLogger(),
 		)
 
-		if got := sweeper.Sweep(ctx); got != 0 {
-			t.Errorf("Sweep() = %d, want 0", got)
+		if got := sweeper.Sweep(ctx); len(got) != 0 {
+			t.Errorf("Sweep() = %v, want nothing", got)
 		}
 	})
 
@@ -109,8 +117,8 @@ func TestHoldSweeper_Sweep(t *testing.T) {
 			discardLogger(),
 		)
 
-		if got := sweeper.Sweep(ctx); got != 0 {
-			t.Errorf("Sweep() = %d, want 0", got)
+		if got := sweeper.Sweep(ctx); len(got) != 0 {
+			t.Errorf("Sweep() = %v, want nothing", got)
 		}
 	})
 }

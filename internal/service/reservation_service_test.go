@@ -53,6 +53,11 @@ func testEvent() *domain.Event {
 		Name:     "Radiohead",
 		Venue:    "Volkswagen Arena",
 		StartsAt: testTime().Add(24 * time.Hour),
+		Details: domain.EventDetails{
+			City:        "Istanbul",
+			Description: "Touring In Rainbows, with a string section for the second half.",
+			Rules:       "Doors at 19:00. Under 16s must come with an adult.",
+		},
 	}
 }
 

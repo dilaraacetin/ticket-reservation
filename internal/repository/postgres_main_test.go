@@ -63,7 +63,7 @@ func runTests(m *testing.M) (int, error) {
 	return m.Run(), nil
 }
 
-func newTestPool(t *testing.T) *pgxpool.Pool {
+func newTestPool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 
 	if testDatabaseURL == "" {
@@ -80,15 +80,15 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func resetSchema(t *testing.T, pool *pgxpool.Pool) {
+func resetSchema(t testing.TB, pool *pgxpool.Pool) {
 	t.Helper()
 
-	if _, err := pool.Exec(t.Context(), "truncate table seats, events"); err != nil {
+	if _, err := pool.Exec(t.Context(), "truncate table waiting_list, seats, events"); err != nil {
 		t.Fatalf("resetting the schema failed: %v", err)
 	}
 }
 
-func uniqueEventID(t *testing.T) string {
+func uniqueEventID(t testing.TB) string {
 	t.Helper()
 
 	return "event-" + t.Name()

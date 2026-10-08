@@ -17,7 +17,37 @@ type User struct {
 	ID           string
 	Email        string
 	PasswordHash string
-	CreatedAt    time.Time
+	Role         Role
+
+	// EmailVerifiedAt is zero until somebody has followed a link sent to the
+	// address. Until then the address is only a claim: anybody can type
+	// somebody else's, and sending to it would make this service a way to post
+	// mail to strangers.
+	EmailVerifiedAt time.Time
+
+	CreatedAt time.Time
+}
+
+// EmailVerified reports whether the address has been shown to belong to whoever
+// registered it.
+func (u *User) EmailVerified() bool {
+	return !u.EmailVerifiedAt.IsZero()
+}
+
+// NewUser returns an account ready to be stored.
+//
+// It exists so that the role cannot be left out. Building a User literally and
+// forgetting it produced an empty role, which the database's check constraint
+// refused — correctly, but by then the caller is reading a SQL error instead of
+// having been unable to make the mistake.
+func NewUser(id, email, passwordHash string, now time.Time) *User {
+	return &User{
+		ID:           id,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Role:         DefaultRole,
+		CreatedAt:    now,
+	}
 }
 
 // NormalizeEmail returns the form an address is stored and compared in.

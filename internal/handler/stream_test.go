@@ -27,8 +27,8 @@ func streamServer(t *testing.T) (*httptest.Server, *event.Broker) {
 		RequestID,
 		Logging(discardLogger()),
 		Recovery(discardLogger()),
-		Authenticate(testTokenSigner, fixedClock{now: testTime()}, discardLogger()),
-		RateLimit(NewRateLimiter(fixedClock{now: testTime()}, time.Minute), discardLogger()),
+		Authenticate(testTokenSigner, nil, fixedClock{now: testTime()}, discardLogger()),
+		RateLimit(NewRateLimiter(fixedClock{now: testTime()}, time.Minute), DefaultPolicies(), discardLogger()),
 	))
 	t.Cleanup(srv.Close)
 

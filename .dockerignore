@@ -1,0 +1,16 @@
+# Everything the image does not need. Keeping it out makes the build context
+# small, and keeps a local .env from ever reaching a layer.
+.env
+.git
+.github
+.idea
+.vscode
+bin
+coverage.out
+coverage.html
+*.test
+.DS_Store
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md

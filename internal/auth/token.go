@@ -3,6 +3,7 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -14,6 +15,21 @@ import (
 const MinSecretLength = 32
 
 const separator = "|"
+
+// fields is how many parts a payload has: the user, the expiry, and the token's
+// own id.
+const fields = 3
+
+// Claims is what a verified token says.
+//
+// The id is what makes a token revocable: signing out records that one id, so a
+// token can be refused before it expires without the signing secret having to
+// change for everybody.
+type Claims struct {
+	UserID    string
+	TokenID   string
+	ExpiresAt time.Time
+}
 
 // Tokens signs and verifies bearer tokens.
 type Tokens struct {
@@ -30,52 +46,63 @@ func NewTokens(secret string) (*Tokens, error) {
 }
 
 // Issue returns a token that names userID until expiresAt.
+//
+// The id is generated here rather than taken from the caller, because a token
+// id that repeats is one that revokes somebody else's token as well.
 func (t *Tokens) Issue(userID string, expiresAt time.Time) (string, error) {
 	if userID == "" || strings.Contains(userID, separator) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidUserID, userID)
 	}
 
-	payload := userID + separator + strconv.FormatInt(expiresAt.Unix(), 10)
+	payload := strings.Join([]string{
+		userID,
+		strconv.FormatInt(expiresAt.Unix(), 10),
+		rand.Text(),
+	}, separator)
 
 	return encode(payload) + "." + encode(string(t.sign(payload))), nil
 }
 
-// Verify returns the user id a token names, or why it cannot be trusted.
-func (t *Tokens) Verify(token string, now time.Time) (string, error) {
+// Verify returns what a token says, or why it cannot be trusted.
+//
+// The signature is checked before anything in the payload is read, so a payload
+// nobody signed never reaches the parsing below.
+func (t *Tokens) Verify(token string, now time.Time) (Claims, error) {
 	encodedPayload, encodedSignature, found := strings.Cut(token, ".")
 	if !found {
-		return "", ErrMalformedToken
+		return Claims{}, ErrMalformedToken
 	}
 
 	payload, err := decode(encodedPayload)
 	if err != nil {
-		return "", ErrMalformedToken
+		return Claims{}, ErrMalformedToken
 	}
 
 	signature, err := decode(encodedSignature)
 	if err != nil {
-		return "", ErrMalformedToken
+		return Claims{}, ErrMalformedToken
 	}
 
 	if !hmac.Equal([]byte(signature), t.sign(payload)) {
-		return "", ErrInvalidSignature
+		return Claims{}, ErrInvalidSignature
 	}
 
-	userID, expiry, found := strings.Cut(payload, separator)
-	if !found || userID == "" {
-		return "", ErrMalformedToken
+	parts := strings.Split(payload, separator)
+	if len(parts) != fields || parts[0] == "" || parts[2] == "" {
+		return Claims{}, ErrMalformedToken
 	}
 
-	seconds, err := strconv.ParseInt(expiry, 10, 64)
+	seconds, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return "", ErrMalformedToken
+		return Claims{}, ErrMalformedToken
 	}
 
-	if !now.Before(time.Unix(seconds, 0)) {
-		return "", ErrTokenExpired
+	expiresAt := time.Unix(seconds, 0)
+	if !now.Before(expiresAt) {
+		return Claims{}, ErrTokenExpired
 	}
 
-	return userID, nil
+	return Claims{UserID: parts[0], TokenID: parts[2], ExpiresAt: expiresAt}, nil
 }
 
 func (t *Tokens) sign(payload string) []byte {

@@ -249,12 +249,12 @@ func TestAccountService_Login(t *testing.T) {
 			t.Fatalf("building the signer failed: %v", err)
 		}
 
-		named, err := tokens.Verify(session.Token, testTime())
+		claims, err := tokens.Verify(session.Token, testTime())
 		if err != nil {
 			t.Fatalf("the issued token does not verify: %v", err)
 		}
-		if named != user.ID {
-			t.Errorf("the token names %q, want %q", named, user.ID)
+		if claims.UserID != user.ID {
+			t.Errorf("the token names %q, want %q", claims.UserID, user.ID)
 		}
 	})
 }

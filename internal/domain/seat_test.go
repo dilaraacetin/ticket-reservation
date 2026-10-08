@@ -283,7 +283,7 @@ func TestSeat_Confirm(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.seat.Confirm(tt.userID, now)
+			err := tt.seat.Confirm(tt.userID, "SH-TEST-CODE", now)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Confirm() error = %v, want %v", err, tt.wantErr)
 			}
@@ -544,7 +544,7 @@ func TestSeat_Lifecycle(t *testing.T) {
 		if err := seat.Hold(testHoldID, testUser, holdTTL, now); err != nil {
 			t.Fatalf("Hold() error = %v", err)
 		}
-		if err := seat.Confirm(testUser, now.Add(time.Minute)); err != nil {
+		if err := seat.Confirm(testUser, "SH-TEST-CODE", now.Add(time.Minute)); err != nil {
 			t.Fatalf("Confirm() error = %v", err)
 		}
 
@@ -579,8 +579,42 @@ func TestSeat_Lifecycle(t *testing.T) {
 		if err := seat.Hold("hold-2", otherUser, holdTTL, afterExpiry); err != nil {
 			t.Errorf("Hold() after expiry error = %v, want nil", err)
 		}
-		if err := seat.Confirm(testUser, afterExpiry); !errors.Is(err, ErrNotHoldOwner) {
+		if err := seat.Confirm(testUser, "SH-TEST-CODE", afterExpiry); !errors.Is(err, ErrNotHoldOwner) {
 			t.Errorf("Confirm() by the previous owner error = %v, want %v", err, ErrNotHoldOwner)
 		}
 	})
+}
+
+// The code is what is scanned at the door, so a seat cannot become a ticket
+// without one.
+func TestSeat_ConfirmNeedsATicketCode(t *testing.T) {
+	seat := NewSeat("event-1", "A1", "A", 1)
+	now := baseTime()
+
+	if err := seat.Hold("hold-1", "user-1", 5*time.Minute, now); err != nil {
+		t.Fatalf("Hold() error = %v", err)
+	}
+
+	if err := seat.Confirm("user-1", "", now); !errors.Is(err, ErrEmptyTicketCode) {
+		t.Errorf("Confirm() with no code = %v, want %v", err, ErrEmptyTicketCode)
+	}
+
+	// And the seat is untouched, rather than half confirmed.
+	if seat.Status != StatusHeld {
+		t.Errorf("status = %v, want it still %v", seat.Status, StatusHeld)
+	}
+}
+
+// Groups of four, which is how far somebody can hold a run of characters in
+// their head between a screen and a scanner.
+func TestFormatTicketCode(t *testing.T) {
+	if got := FormatTicketCode("7K2Q94XD"); got != "SH-7K2Q-94XD" {
+		t.Errorf("FormatTicketCode() = %q, want SH-7K2Q-94XD", got)
+	}
+
+	// A length that does not divide evenly still comes out readable rather than
+	// losing its tail.
+	if got := FormatTicketCode("ABCDE"); got != "SH-ABCD-E" {
+		t.Errorf("FormatTicketCode() = %q, want SH-ABCD-E", got)
+	}
 }

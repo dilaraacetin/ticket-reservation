@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"sync"
+	"time"
 
 	"ticket-reservation/internal/domain"
 )
@@ -45,6 +46,61 @@ func (r *MemoryUserRepository) GetUserByEmail(_ context.Context, email string) (
 	}
 
 	return &user, nil
+}
+
+// GetUserByID walks the map, because accounts are keyed by address. The lookups
+// that matter for latency go through the address; this one serves authorization
+// checks, which are rare.
+func (r *MemoryUserRepository) GetUserByID(_ context.Context, userID string) (*domain.User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, user := range r.users {
+		if user.ID == userID {
+			stored := user
+
+			return &stored, nil
+		}
+	}
+
+	return nil, ErrUserNotFound
+}
+
+// SetRole changes what an account may do.
+func (r *MemoryUserRepository) SetRole(_ context.Context, email string, role domain.Role) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user, ok := r.users[email]
+	if !ok {
+		return ErrUserNotFound
+	}
+
+	user.Role = role
+	r.users[email] = user
+
+	return nil
+}
+
+// MarkEmailVerified records that an address belongs to the account, and only
+// while the account still has that address.
+func (r *MemoryUserRepository) MarkEmailVerified(
+	_ context.Context,
+	userID, email string,
+	now time.Time,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user, found := r.users[email]
+	if !found || user.ID != userID {
+		return ErrUserNotFound
+	}
+
+	user.EmailVerifiedAt = now
+	r.users[email] = user
+
+	return nil
 }
 
 // UpdatePasswordHash replaces the stored hash for an account.

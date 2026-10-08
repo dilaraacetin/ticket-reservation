@@ -13,6 +13,7 @@ import (
 
 	"ticket-reservation/internal/domain"
 	"ticket-reservation/internal/repository"
+	"ticket-reservation/internal/service"
 )
 
 const (
@@ -43,11 +44,12 @@ func (c fixedClock) Now() time.Time {
 // mock library here: the interface has five methods and the tests only care
 // about what comes back.
 type fakeService struct {
-	events []*domain.Event
-	seats  []*domain.Seat
-	hold   *domain.Hold
-	seat   *domain.Seat
-	err    error
+	events  []*domain.Event
+	seats   []*domain.Seat
+	hold    *domain.Hold
+	seat    *domain.Seat
+	tickets []service.Ticket
+	err     error
 
 	// Recorded arguments, for the tests that care that the handler passed the
 	// right values through.
@@ -57,8 +59,30 @@ type fakeService struct {
 	gotUserID  string
 }
 
+func (f *fakeService) MyTickets(_ context.Context, userID string) ([]service.Ticket, error) {
+	f.gotUserID = userID
+
+	return f.tickets, f.err
+}
+
 func (f *fakeService) Events(context.Context) ([]*domain.Event, error) {
 	return f.events, f.err
+}
+
+func (f *fakeService) Event(_ context.Context, eventID string) (*domain.Event, error) {
+	f.gotEventID = eventID
+
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	for _, event := range f.events {
+		if event.ID == eventID {
+			return event, nil
+		}
+	}
+
+	return nil, repository.ErrEventNotFound
 }
 
 func (f *fakeService) SeatMap(_ context.Context, eventID string) ([]*domain.Seat, error) {
@@ -96,7 +120,7 @@ func do(svc ReservationService, method, target string, headers map[string]string
 
 	rec := httptest.NewRecorder()
 
-	authenticated := Authenticate(testTokenSigner, fixedClock{now: testTime()}, discardLogger())(h.Routes())
+	authenticated := Authenticate(testTokenSigner, nil, fixedClock{now: testTime()}, discardLogger())(h.Routes())
 	authenticated.ServeHTTP(rec, req)
 
 	return rec
@@ -299,7 +323,7 @@ func TestHandler_ConfirmReservation(t *testing.T) {
 		if err := reserved.Hold(testHoldID, testUser, time.Minute, testTime()); err != nil {
 			t.Fatalf("seeding hold failed: %v", err)
 		}
-		if err := reserved.Confirm(testUser, testTime()); err != nil {
+		if err := reserved.Confirm(testUser, "SH-TEST-CODE", testTime()); err != nil {
 			t.Fatalf("seeding confirm failed: %v", err)
 		}
 

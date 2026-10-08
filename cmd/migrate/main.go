@@ -12,7 +12,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -31,12 +30,9 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
+	databaseURL, err := config.LoadDatabaseURL()
 	if err != nil {
 		return err
-	}
-	if !cfg.UsesDatabase() {
-		return errors.New("DATABASE_URL is not set")
 	}
 
 	if len(os.Args) != 2 {
@@ -48,14 +44,14 @@ func run() error {
 
 	switch command := os.Args[1]; command {
 	case "up":
-		version, err := repository.Migrate(ctx, cfg.DatabaseURL)
+		version, err := repository.Migrate(ctx, databaseURL)
 		if err != nil {
 			return err
 		}
 
 		fmt.Printf("schema is at version %d\n", version)
 	case "down":
-		if err := repository.MigrateDown(ctx, cfg.DatabaseURL); err != nil {
+		if err := repository.MigrateDown(ctx, databaseURL); err != nil {
 			return err
 		}
 

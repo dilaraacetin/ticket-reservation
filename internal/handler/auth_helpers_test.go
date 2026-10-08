@@ -43,7 +43,7 @@ func reservedSeatFor(userID string) *domain.Seat {
 	if err := seat.Hold(testHoldID, userID, time.Minute, testTime()); err != nil {
 		panic(err)
 	}
-	if err := seat.Confirm(userID, testTime()); err != nil {
+	if err := seat.Confirm(userID, "SH-TEST-CODE", testTime()); err != nil {
 		panic(err)
 	}
 

@@ -24,6 +24,23 @@ type Seat struct {
 
 	// ReservedBy is set once the seat has been confirmed.
 	ReservedBy string
+
+	// TicketCode is what is shown and scanned at the door. Set when the seat is
+	// confirmed and never afterwards: it is the ticket, so it has to mean the
+	// same thing on the day as it did when it was issued.
+	TicketCode string
+}
+
+// SeatRef names a seat without carrying its state, for reporting which seats an
+// operation touched.
+type SeatRef struct {
+	EventID string
+	SeatID  string
+}
+
+// Ref returns the seat's identity.
+func (s *Seat) Ref() SeatRef {
+	return SeatRef{EventID: s.EventID, SeatID: s.ID}
 }
 
 // NewSeat returns an available seat.
@@ -90,7 +107,11 @@ func (s *Seat) Hold(holdID, userID string, duration time.Duration, now time.Time
 // Confirm turns the caller's live hold into a reservation. Ownership is checked
 // before expiry, so a stranger gets ErrNotHoldOwner either way and the error
 // never leaks the state of someone else's hold.
-func (s *Seat) Confirm(userID string, now time.Time) error {
+//
+// The ticket code is given here because this is the moment the ticket exists.
+// It is not derived from the seat or the account: somebody who knows a row and
+// a number must not be able to work out what will be scanned at the door.
+func (s *Seat) Confirm(userID, ticketCode string, now time.Time) error {
 	if userID == "" {
 		return ErrEmptyUserID
 	}
@@ -104,11 +125,35 @@ func (s *Seat) Confirm(userID string, now time.Time) error {
 		return ErrHoldExpired
 	}
 
+	if ticketCode == "" {
+		return ErrEmptyTicketCode
+	}
+
 	s.Status = StatusReserved
 	s.ReservedBy = userID
+	s.TicketCode = ticketCode
 	s.clearHold()
 
 	return nil
+}
+
+// FormatTicketCode turns a raw code into the grouped form people read out and
+// type in. Groups of four, because that is how far somebody can hold a run of
+// characters in their head while looking between a screen and a scanner.
+func FormatTicketCode(raw string) string {
+	const (
+		prefix = "SH"
+		group  = 4
+	)
+
+	code := prefix
+
+	for i := 0; i < len(raw); i += group {
+		end := min(i+group, len(raw))
+		code += "-" + raw[i:end]
+	}
+
+	return code
 }
 
 // Release drops the hold on behalf of the user that owns it. An expired hold can

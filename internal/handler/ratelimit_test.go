@@ -36,7 +36,7 @@ func (c *movingClock) Advance(d time.Duration) {
 
 // limited wraps a handler that counts how often it actually ran.
 func limited(clock Clock, next *countingHandler) http.Handler {
-	return RateLimit(NewRateLimiter(clock, time.Minute), discardLogger())(next)
+	return RateLimit(NewRateLimiter(clock, time.Minute), DefaultPolicies(), discardLogger())(next)
 }
 
 func callFrom(handler http.Handler, target, remoteAddr, authorization string) *httptest.ResponseRecorder {
@@ -168,8 +168,8 @@ func TestRateLimit_SignedInCallersAreLimitedByAccount(t *testing.T) {
 
 	// Authenticate first, so the limiter can see who is calling.
 	handler := Chain(next,
-		Authenticate(testTokenSigner, fixedClock{now: testTime()}, discardLogger()),
-		RateLimit(NewRateLimiter(clock, time.Minute), discardLogger()),
+		Authenticate(testTokenSigner, nil, fixedClock{now: testTime()}, discardLogger()),
+		RateLimit(NewRateLimiter(clock, time.Minute), DefaultPolicies(), discardLogger()),
 	)
 
 	token := bearerForUser("usr_00000001")

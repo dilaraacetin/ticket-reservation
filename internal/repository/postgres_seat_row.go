@@ -10,7 +10,7 @@ import (
 )
 
 const seatColumns = `event_id, id, row_label, number, status,
-	hold_id, held_by, hold_created_at, hold_expires_at, reserved_by, version`
+	hold_id, held_by, hold_created_at, hold_expires_at, reserved_by, ticket_code, version`
 
 type seatRow struct {
 	eventID       string
@@ -23,13 +23,14 @@ type seatRow struct {
 	holdCreatedAt *time.Time
 	holdExpiresAt *time.Time
 	reservedBy    *string
+	ticketCode    *string
 	version       int64
 }
 
 func (r *seatRow) scan(row pgx.Row) error {
 	return row.Scan(
 		&r.eventID, &r.id, &r.rowLabel, &r.number, &r.status,
-		&r.holdID, &r.heldBy, &r.holdCreatedAt, &r.holdExpiresAt, &r.reservedBy, &r.version,
+		&r.holdID, &r.heldBy, &r.holdCreatedAt, &r.holdExpiresAt, &r.reservedBy, &r.ticketCode, &r.version,
 	)
 }
 
@@ -50,6 +51,7 @@ func (r seatRow) toDomain() (*domain.Seat, error) {
 		HoldCreatedAt: instant(r.holdCreatedAt),
 		HoldExpiresAt: instant(r.holdExpiresAt),
 		ReservedBy:    text(r.reservedBy),
+		TicketCode:    text(r.ticketCode),
 	}, nil
 }
 

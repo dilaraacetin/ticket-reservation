@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"ticket-reservation/internal/domain"
 	"ticket-reservation/internal/repository"
 )
 
@@ -21,6 +22,7 @@ type HoldSweeper struct {
 	clock    Clock
 	interval time.Duration
 	logger   *slog.Logger
+	offerer  SeatOfferer
 }
 
 func NewHoldSweeper(
@@ -34,7 +36,15 @@ func NewHoldSweeper(
 		clock:    clock,
 		interval: interval,
 		logger:   logger,
+		offerer:  discardOfferer{},
 	}
+}
+
+// WithOfferer wires in what happens to the seats a sweep frees.
+func (w *HoldSweeper) WithOfferer(offerer SeatOfferer) *HoldSweeper {
+	w.offerer = offerer
+
+	return w
 }
 
 // Run sweeps on every tick until ctx is cancelled, then returns nil. It blocks,
@@ -58,20 +68,24 @@ func (w *HoldSweeper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one pass and reports how many holds it released. A failed sweep is
-// logged rather than returned, because one bad pass must not take the worker
-// down; the next tick will try again.
-func (w *HoldSweeper) Sweep(ctx context.Context) int {
-	expired, err := w.seats.ExpireHolds(ctx, w.clock.Now())
+// Sweep runs one pass and returns the seats it freed. A failed sweep is logged
+// rather than returned, because one bad pass must not take the worker down; the
+// next tick will try again.
+func (w *HoldSweeper) Sweep(ctx context.Context) []domain.SeatRef {
+	freed, err := w.seats.ExpireHolds(ctx, w.clock.Now())
 	if err != nil {
 		w.logger.ErrorContext(ctx, "sweeping expired holds failed", "err", err)
 
-		return 0
+		return nil
 	}
 
-	if expired > 0 {
-		w.logger.InfoContext(ctx, "released expired holds", "count", expired)
+	if len(freed) > 0 {
+		w.logger.InfoContext(ctx, "released expired holds", "count", len(freed))
 	}
 
-	return expired
+	for _, seat := range freed {
+		w.offerer.Offer(seat)
+	}
+
+	return freed
 }

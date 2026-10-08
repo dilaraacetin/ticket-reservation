@@ -1,293 +1,470 @@
-// The browser side of the reservation service.
-//
-// Deliberately dependency free: the page is served from the same origin as the
-// API, so there is nothing to configure and no build step between writing this
-// and running it.
+// SeatHold. The router decides what is on the page; everything else hands it a
+// node and gets out of the way.
 
-const $ = (id) => document.getElementById(id);
+import { api, ApiError, hasToken, openStream, setToken } from "./api.js";
+import { banner, clearBanners, dismissBanner, el, icon, showError } from "./ui.js";
+import {
+  accountView,
+  addSeatsView,
+  authView,
+  editEventView,
+  eventCreatedView,
+  eventDetailView,
+  eventsView,
+  holdBar,
+  holdPrompt,
+  manageView,
+  newEventView,
+  notPermittedView,
+  renderSeats,
+  seatMapView,
+  seatsAddedView,
+  sheet,
+  ticketView,
+  ticketsView,
+  waitlistPanel,
+} from "./views.js";
 
-// The token lives in memory only. sessionStorage would survive a reload, but it
-// is also readable by any script that ends up on the page, and a reload asking
-// for a sign in is a small price.
 const state = {
-  token: null,
-  userId: null,
+  account: null,
+  route: "auth",
+  params: {},
+
+  city: "",
+  category: "",
+
   event: null,
-  hold: null,        // { holdId, seatId, expiresAt }
-  countdownTimer: null,
-  refreshTimer: null,
-  stream: null,          // EventSource, open while a seat map is on screen
+  seats: [],
+  hold: null,
+  place: null,
+  stale: false,
+  pushOn: false,
+  notifications: [],
+
+  stream: null,
+  countdown: null,
+  poll: null,
+  authMode: "signin",
 };
 
-// --- talking to the API -------------------------------------------------
+const screen = () => document.getElementById("screen");
+const layer = () => document.getElementById("layer");
 
-// The one place a request is made, so headers and error handling are not spread
-// across every call site.
-async function api(method, path, { body, idempotencyKey } = {}) {
-  const headers = {};
+// ---- the actions the views call back into ----
 
-  if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
-  if (body) headers["Content-Type"] = "application/json";
-  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+const ctx = {
+  state,
+  go,
+  setFilters,
+  signedIn,
+  holdSeat,
+  confirmHold,
+  releaseHold,
+  holdRanOut,
+  joinQueue,
+  leaveQueue,
+  confirmSignOut,
+  confirmCancelEvent,
+  confirmDeleteEvent,
+};
 
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+// ---- routing ----
 
-  // 204 has no body to read.
-  const payload = response.status === 204 ? null : await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new ApiError(response.status, payload, response.headers.get("Retry-After"));
-  }
-
-  return payload;
-}
-
-class ApiError extends Error {
-  constructor(status, payload, retryAfter) {
-    const code = payload?.error?.code ?? "unknown";
-    super(payload?.error?.message ?? `request failed with ${status}`);
-
-    this.status = status;
-    this.code = code;
-    this.retryAfter = retryAfter;
-  }
-}
-
-// --- messages -----------------------------------------------------------
-
-function showError(err) {
-  const alert = $("alert");
-  alert.classList.remove("hidden", "ok");
-
-  // The server's codes are stable; its prose is not. Explaining the ones worth
-  // explaining here keeps the page useful without inventing new vocabulary.
-  const explanations = {
-    seat_not_available: "Somebody else got there first.",
-    seat_not_held: "That seat is not held, so there is nothing to confirm.",
-    hold_expired: "Your hold ran out. Pick a seat again.",
-    hold_not_found: "That hold no longer exists.",
-    not_hold_owner: "That hold belongs to somebody else.",
-    invalid_credentials: "That email address or password is wrong.",
-    email_taken: "That address already has an account.",
-    weak_password: "Passwords are at least 8 characters.",
-    invalid_email: "That does not look like an email address.",
-    unauthenticated: "Sign in first.",
-    invalid_token: "Your session is no longer valid. Sign in again.",
-    too_many_requests: err.retryAfter
-      ? `Too many requests. Try again in ${err.retryAfter} seconds.`
-      : "Too many requests, slow down.",
-  };
-
-  const explanation = explanations[err.code] ?? err.message;
-  alert.innerHTML = `${explanation} <code>${err.code} · ${err.status}</code>`;
-}
-
-function showNote(message) {
-  const alert = $("alert");
-  alert.classList.remove("hidden");
-  alert.classList.add("ok");
-  alert.textContent = message;
-}
-
-function clearMessage() {
-  $("alert").classList.add("hidden");
-}
-
-// --- screens ------------------------------------------------------------
-
-function show(screen) {
-  for (const id of ["screen-auth", "screen-events", "screen-seats"]) {
-    $(id).classList.toggle("hidden", id !== screen);
-  }
-}
-
-// --- signing in ---------------------------------------------------------
-
-async function signIn(event) {
-  event.preventDefault();
-  clearMessage();
-
-  const credentials = { email: $("email").value, password: $("password").value };
-
-  try {
-    const session = await api("POST", "/auth/login", { body: credentials });
-
-    state.token = session.token;
-    state.userId = session.userId;
-
-    $("whoami-name").textContent = credentials.email;
-    $("whoami").classList.remove("hidden");
-
-    await loadEvents();
-  } catch (err) {
-    showError(err);
-  }
-}
-
-async function signUp() {
-  clearMessage();
-
-  const credentials = { email: $("email").value, password: $("password").value };
-
-  try {
-    await api("POST", "/auth/register", { body: credentials });
-    showNote("Account created. Signing you in.");
-
-    // Registration deliberately returns no token, so signing in is its own call.
-    await signIn(new Event("submit"));
-  } catch (err) {
-    showError(err);
-  }
-}
-
-function signOut() {
-  state.token = null;
-  state.userId = null;
-  releaseLocalHold();
-
-  $("whoami").classList.add("hidden");
-  clearInterval(state.refreshTimer);
-  closeStream();
-  show("screen-auth");
-}
-
-// --- events -------------------------------------------------------------
-
-async function loadEvents() {
-  try {
-    const events = await api("GET", "/events");
-    const list = $("event-list");
-    list.innerHTML = "";
-
-    if (events.length === 0) {
-      list.innerHTML = `<p class="muted">Nothing on sale yet.</p>`;
-    }
-
-    for (const event of events) {
-      const card = document.createElement("button");
-      card.className = "event";
-      card.innerHTML = `
-        <div class="event-name"></div>
-        <div class="event-meta"></div>
-        ${event.hasStarted ? `<div class="event-started">Already started</div>` : ""}
-      `;
-
-      // textContent rather than interpolation: an event name is data, and data
-      // does not get to write markup.
-      card.querySelector(".event-name").textContent = event.name;
-      card.querySelector(".event-meta").textContent =
-        `${event.venue} · ${new Date(event.startsAt).toLocaleString()}`;
-
-      card.addEventListener("click", () => openEvent(event));
-      list.appendChild(card);
-    }
-
-    show("screen-events");
-  } catch (err) {
-    showError(err);
-  }
-}
-
-async function openEvent(event) {
-  state.event = event;
-
-  $("event-name").textContent = event.name;
-  $("event-meta").textContent =
-    `${event.venue} · ${new Date(event.startsAt).toLocaleString()}`;
-
-  await loadSeats();
-  show("screen-seats");
-
-  openStream();
-
-  // A slow poll behind the stream, not instead of it. It catches the one change
-  // the server does not announce yet, a hold expiring under the sweeper, and it
-  // covers the gap while a dropped stream reconnects.
-  clearInterval(state.refreshTimer);
-  state.refreshTimer = setInterval(loadSeats, 15000);
-}
-
-// openStream holds a connection open and reloads the map whenever the server
-// says a seat changed.
-function openStream() {
-  closeStream();
-
-  state.stream = new EventSource(`/events/${encodeURIComponent(state.event.id)}/stream`);
-  state.stream.addEventListener("seat_changed", () => loadSeats());
-
-  state.stream.addEventListener("turn_came", (message) => {
-    const notice = JSON.parse(message.data);
-    showNote(`Seat ${notice.seatId} is free and held for you.`);
-    loadSeats();
-  });
-
-  state.stream.onerror = () => {};
-}
-
-function closeStream() {
-  if (state.stream) {
-    state.stream.close();
+async function go(route, params = {}) {
+  // Leaving a seat map tears down everything it was running, so nothing keeps
+  // ticking behind a screen nobody is looking at.
+  if (state.route === "seats" && route !== "seats") {
+    state.stream?.close();
     state.stream = null;
+    clearInterval(state.poll);
+    state.stale = false;
   }
+
+  state.route = route;
+  state.params = params;
+
+  clearBanners();
+  await render();
+
+  screen().focus({ preventScroll: true });
+  window.scrollTo(0, 0);
 }
 
-async function loadSeats() {
+// setFilters narrows the catalogue. It redraws rather than routing, because the
+// filters are a view of the same screen and going back from an event should not
+// land on an unfiltered list.
+async function setFilters({ category = state.category, city = state.city }) {
+  state.category = category;
+  state.city = city;
+  await render();
+}
+
+async function render() {
+  const view = screen();
+  view.replaceChildren();
+  layer().replaceChildren();
+
+  renderTabs();
+
   try {
-    const map = await api("GET", `/events/${encodeURIComponent(state.event.id)}/seats`);
-    renderSeats(map.seats);
-  } catch (err) {
-    showError(err);
-  }
-}
+    switch (state.route) {
+      case "auth":
+        view.append(authView(ctx));
+        break;
 
-function renderSeats(seats) {
-  const container = $("seat-map");
-  container.innerHTML = "";
-
-  // Grouped by row, in the order the server sent them, which is already sorted.
-  const rows = new Map();
-  for (const seat of seats) {
-    if (!rows.has(seat.row)) rows.set(seat.row, []);
-    rows.get(seat.row).push(seat);
-  }
-
-  for (const [label, rowSeats] of rows) {
-    const row = document.createElement("div");
-    row.className = "seat-row";
-    row.innerHTML = `<div class="seat-row-label"></div><div class="seat-row-seats"></div>`;
-    row.querySelector(".seat-row-label").textContent = label;
-
-    const cells = row.querySelector(".seat-row-seats");
-
-    for (const seat of rowSeats) {
-      const cell = document.createElement("button");
-
-      // The seat map never says who holds a seat, so "yours" is something this
-      // page knows locally rather than something the server tells it.
-      const mine = state.hold?.seatId === seat.id;
-      cell.className = `seat ${mine ? "mine" : seat.status}`;
-      cell.textContent = seat.number;
-      cell.disabled = seat.status !== "available" || state.hold !== null;
-
-      if (seat.status === "available" && !state.hold) {
-        cell.addEventListener("click", () => holdSeat(seat));
+      case "events": {
+        const events = await api("GET", "/events");
+        view.append(eventsView(ctx, events));
+        break;
       }
 
-      cells.appendChild(cell);
+      case "event": {
+        const event = await api("GET", `/events/${encodeURIComponent(state.params.eventID)}`);
+        view.append(eventDetailView(ctx, event));
+        break;
+      }
+
+      case "seats":
+        await renderSeatMap(view);
+        break;
+
+      case "tickets": {
+        const body = await api("GET", "/tickets");
+        // The hold bar covers holds; this screen is about tickets.
+        view.append(ticketsView(ctx, body.reservations));
+        break;
+      }
+
+      case "ticket": {
+        const body = await api("GET", "/tickets");
+        const ticket = body.reservations.find((t) => t.ticketCode === state.params.code);
+
+        if (!ticket) {
+          await go("tickets");
+
+          return;
+        }
+
+        view.append(ticketView(ctx, ticket));
+        break;
+      }
+
+      case "account":
+        await loadNotifications();
+        view.append(accountView(ctx, state.account));
+        break;
+
+      case "manage": {
+        if (!isAdmin()) {
+          view.append(notPermittedView(ctx));
+          break;
+        }
+
+        const events = await api("GET", "/events");
+        view.append(manageView(ctx, events));
+
+        // Carried across a redirect rather than shown before it, so the message
+        // is not wiped by the render it is about.
+        if (state.params.flash) banner(...state.params.flash);
+        break;
+      }
+
+      case "manage-new":
+        if (!isAdmin()) {
+          view.append(notPermittedView(ctx));
+          break;
+        }
+        view.append(newEventView(ctx));
+        break;
+
+      case "manage-edit":
+        if (!isAdmin()) {
+          view.append(notPermittedView(ctx));
+          break;
+        }
+        view.append(editEventView(ctx, state.params.event));
+        break;
+
+      case "manage-created":
+        view.append(eventCreatedView(ctx, state.params.event));
+        break;
+
+      case "manage-seats":
+        view.append(addSeatsView(ctx, state.params.event));
+        break;
+
+      case "manage-added":
+        view.append(seatsAddedView(ctx, state.params));
+        break;
+
+      default:
+        await go("events");
+    }
+  } catch (err) {
+    if (err instanceof ApiError && (err.code === "unauthenticated" || err.code === "invalid_token")) {
+      setToken(null);
+      state.account = null;
+      await go("auth");
+
+      return;
     }
 
-    container.appendChild(row);
+    showError(err);
   }
 }
 
-// --- holding, confirming, releasing -------------------------------------
+function isAdmin() {
+  return state.account?.role === "admin";
+}
+
+function renderTabs() {
+  const nav = document.getElementById("tabs");
+
+  // No account, no sections: the only thing on screen is the way in.
+  if (!state.account && state.route === "auth") {
+    nav.classList.add("hidden");
+
+    return;
+  }
+
+  nav.classList.remove("hidden");
+  nav.replaceChildren();
+
+  const tabs = [
+    ["events", "Events", icon.calendar],
+    ["tickets", "My tickets", icon.ticket],
+    ["account", "Account", icon.person],
+  ];
+
+  // The Manage tab exists only for administrators. Somebody who reaches the
+  // route another way still meets the refusal, so this is tidiness rather than
+  // the control itself.
+  if (isAdmin()) tabs.push(["manage", "Manage", icon.sliders]);
+
+  for (const [route, text, art] of tabs) {
+    const tab = el("button", "tab");
+    const pill = el("span", "pill");
+    pill.innerHTML = art;
+
+    tab.append(pill, el("span", null, text));
+
+    const here = state.route === route || state.route.startsWith(`${route}-`) ||
+      (route === "tickets" && state.route === "ticket") ||
+      (route === "events" && (state.route === "event" || state.route === "seats"));
+
+    if (here) tab.setAttribute("aria-current", "page");
+
+    tab.addEventListener("click", () => {
+      if (!state.account && route !== "events") {
+        go("auth");
+
+        return;
+      }
+
+      go(route);
+    });
+
+    nav.append(tab);
+  }
+}
+
+// ---- the seat map ----
+
+async function renderSeatMap(view) {
+  const id = encodeURIComponent(state.params.eventID);
+
+  let event, map;
+  try {
+    [event, map] = await Promise.all([
+      api("GET", `/events/${id}`),
+      api("GET", `/events/${id}/seats`),
+    ]);
+  } catch (err) {
+    // Gone means back to the catalogue. Anything else is a real failure and
+    // belongs to the caller, which puts it on screen.
+    if (err.status !== 404) throw err;
+
+    await go("events");
+
+    return;
+  }
+
+  state.event = event;
+  state.seats = map.seats;
+
+  view.append(seatMapView(ctx, state.event, state.seats));
+
+  if (state.event.cancelled) {
+    banner("error", "This event was cancelled", "It is no longer going ahead.", { dismissible: false });
+  }
+
+  await recoverHold();
+  await refreshPlace();
+
+  paintBottom();
+  openSeatStream();
+
+  // A slow poll behind the stream, not instead of it. It covers the gap while a
+  // dropped stream reconnects.
+  clearInterval(state.poll);
+  state.poll = setInterval(reloadSeats, 15000);
+}
+
+// recoverHold puts the page back where it was. A reload during a hold would
+// otherwise leave the seat held with nothing on screen able to confirm it.
+async function recoverHold() {
+  if (!state.account) return;
+
+  const body = await api("GET", "/tickets");
+  const mine = body.holds.find((h) => h.eventId === state.event.id);
+
+  if (!mine) {
+    state.hold = null;
+
+    return;
+  }
+
+  state.hold = {
+    holdId: mine.holdId,
+    seatId: mine.seatId,
+    eventName: mine.eventName,
+    expiresAt: new Date(mine.expiresAt).getTime(),
+    startedAt: Date.now() - (300 - mine.expiresInSeconds) * 1000,
+  };
+}
+
+async function refreshPlace() {
+  state.place = null;
+
+  if (!state.account) return;
+
+  try {
+    const place = await api("GET", `/events/${encodeURIComponent(state.event.id)}/waiting-list`);
+    state.place = place.position;
+  } catch (err) {
+    // Not being in the queue is the ordinary case, not a failure.
+    if (!(err instanceof ApiError) || err.code !== "not_waiting") throw err;
+  }
+}
+
+// paintBottom decides what sits at the bottom of the seat map: a running hold, a
+// queue, or the invitation to tap a seat.
+function paintBottom() {
+  layer().replaceChildren();
+
+  if (state.hold) {
+    layer().append(holdBar(ctx));
+
+    return;
+  }
+
+  clearInterval(state.countdown);
+
+  const open = state.seats.filter((s) => s.status === "available").length;
+
+  if (open === 0 && state.account && !state.event.cancelled) {
+    layer().append(waitlistPanel(ctx, state.place));
+
+    return;
+  }
+
+  if (state.account && !state.event.cancelled) layer().append(holdPrompt());
+}
+
+async function reloadSeats() {
+  if (state.route !== "seats") return;
+
+  const map = await api("GET", `/events/${encodeURIComponent(state.event.id)}/seats`);
+  state.seats = map.seats;
+
+  repaintSeats();
+}
+
+function repaintSeats() {
+  const grid = document.getElementById("seat-grid");
+  const counts = document.getElementById("counts");
+  if (!grid || !counts) return;
+
+  renderSeats(ctx, grid, counts, state.seats);
+  paintBottom();
+}
+
+function openSeatStream() {
+  state.stream?.close();
+
+  state.stream = openStream(state.event.id, {
+    onOpen() {
+      if (state.stale) {
+        banner("success", "Back online", "The seat map is up to date.", { id: "stream" });
+        setTimeout(() => dismissBanner("stream"), 4000);
+      }
+
+      state.stale = false;
+      document.getElementById("live-tag")?.replaceChildren(document.createTextNode("Live"));
+      reloadSeats().catch(() => {});
+    },
+
+    onLost() {
+      state.stale = true;
+
+      const tag = document.getElementById("live-tag");
+      if (tag) {
+        tag.className = "tag tag-started";
+        tag.textContent = "Reconnecting…";
+      }
+
+      banner("warning", "Reconnecting…", "Seat changes may be out of date for a moment.", {
+        id: "stream",
+        icon: icon.offline,
+        action: { label: "Retry now", onClick: () => state.stream?.retry() },
+      });
+
+      repaintSeats();
+    },
+
+    seat_changed() {
+      reloadSeats().catch(() => {});
+    },
+
+    event_cancelled() {
+      state.hold = null;
+      state.place = null;
+      banner("error", "This event was cancelled", "It is no longer going ahead.", { dismissible: false });
+      go("seats", state.params);
+    },
+
+    // A seat came free and the server has already held it. The page steps into
+    // that hold as if the person had tapped the seat themselves.
+    turn_came(notice) {
+      state.place = null;
+      state.hold = {
+        holdId: notice.holdId,
+        seatId: notice.seatId,
+        eventName: state.event?.name ?? "",
+        expiresAt: new Date(notice.expiresAt).getTime(),
+        startedAt: Date.now(),
+        fromWaitlist: true,
+      };
+
+      banner("info", "It's your turn!", `${notice.seatId} is held for you for 5 minutes.`, {
+        icon: icon.check,
+      });
+
+      reloadSeats().catch(() => {});
+    },
+  });
+}
+
+// ---- seat actions ----
 
 async function holdSeat(seat) {
-  clearMessage();
+  if (!state.account) {
+    await go("auth");
+
+    return;
+  }
+
+  clearBanners();
 
   try {
     const hold = await api(
@@ -296,93 +473,299 @@ async function holdSeat(seat) {
       { idempotencyKey: crypto.randomUUID() },
     );
 
-    state.hold = { holdId: hold.holdId, seatId: hold.seatId, expiresAt: new Date(hold.expiresAt) };
+    state.hold = {
+      holdId: hold.holdId,
+      seatId: hold.seatId,
+      eventName: state.event.name,
+      expiresAt: new Date(hold.expiresAt).getTime(),
+      startedAt: Date.now(),
+    };
 
-    $("hold-seat").textContent = hold.seatId;
-    $("hold-bar").classList.remove("hidden");
+    await reloadSeats();
 
-    startCountdown();
-    await loadSeats();
+    document.querySelector(".seat.mine")?.classList.add("just-held");
   } catch (err) {
-    showError(err);
-    await loadSeats();
+    if (err instanceof ApiError) showError(err, { seat: seat.id });
+    else throw err;
+
+    await reloadSeats();
   }
 }
 
 async function confirmHold() {
-  clearMessage();
+  clearBanners();
+
+  const seatId = state.hold?.seatId;
 
   try {
     const reservation = await api("POST", `/holds/${encodeURIComponent(state.hold.holdId)}/confirm`, {
-      // A key, so that a retry after a lost response replays the first answer
-      // rather than reporting that the hold has gone.
+      // A key, so a retry after a lost answer replays the first one rather than
+      // reporting that the hold has gone.
       idempotencyKey: crypto.randomUUID(),
     });
 
-    showNote(`Seat ${reservation.seatId} is yours.`);
-    releaseLocalHold();
-    await loadSeats();
+    dropHold();
+    banner("success", `Seat ${reservation.seatId} is yours`, "It's in My tickets, ready to scan at the door.");
+    await reloadSeats();
   } catch (err) {
-    showError(err);
-    releaseLocalHold();
-    await loadSeats();
+    dropHold();
+    if (err instanceof ApiError) showError(err, { seat: seatId });
+    else throw err;
+
+    await reloadSeats();
   }
 }
 
 async function releaseHold() {
-  clearMessage();
+  clearBanners();
 
   try {
     await api("DELETE", `/holds/${encodeURIComponent(state.hold.holdId)}`);
   } catch (err) {
-    showError(err);
+    if (err instanceof ApiError) showError(err);
   } finally {
-    releaseLocalHold();
-    await loadSeats();
+    dropHold();
+    await reloadSeats();
   }
 }
 
-function releaseLocalHold() {
+function holdRanOut() {
+  const seatId = state.hold?.seatId;
+
+  dropHold();
+  banner("error", "Your time ran out", `${seatId} is open again. Tap any seat to start a new 5-minute hold.`);
+  reloadSeats().catch(() => {});
+}
+
+function dropHold() {
   state.hold = null;
-  clearInterval(state.countdownTimer);
-  $("hold-bar").classList.add("hidden");
+  clearInterval(state.countdown);
+  paintBottom();
 }
 
-// The countdown is the clearest sign that a hold is a temporary thing. It runs
-// off the expiry the server sent, not off a local count, so a slow request does
-// not leave the two disagreeing.
-function startCountdown() {
-  clearInterval(state.countdownTimer);
+// ---- the queue ----
 
-  const tick = async () => {
-    if (!state.hold) return;
+async function joinQueue() {
+  clearBanners();
 
-    const remaining = Math.max(0, Math.floor((state.hold.expiresAt - Date.now()) / 1000));
+  try {
+    const place = await api("POST", `/events/${encodeURIComponent(state.event.id)}/waiting-list`);
+    state.place = place.position;
 
-    const minutes = String(Math.floor(remaining / 60)).padStart(2, "0");
-    const seconds = String(remaining % 60).padStart(2, "0");
-    $("hold-countdown").textContent = `${minutes}:${seconds}`;
+    // Asked for only now: somebody who has joined a queue has a reason to want
+    // telling, which is the moment to ask rather than on the way in.
+    await enablePush();
+    paintBottom();
+  } catch (err) {
+    if (err instanceof ApiError) showError(err);
+    else throw err;
+  }
+}
 
-    if (remaining === 0) {
-      showNote("Your hold ran out and the seat is free again.");
-      releaseLocalHold();
-      await loadSeats();
+async function leaveQueue() {
+  clearBanners();
+
+  try {
+    await api("DELETE", `/events/${encodeURIComponent(state.event.id)}/waiting-list`);
+    state.place = null;
+    paintBottom();
+  } catch (err) {
+    if (err instanceof ApiError) showError(err);
+  }
+}
+
+// ---- account ----
+
+async function signedIn() {
+  state.account = await api("GET", "/account");
+
+  if (!state.account.emailVerified) {
+    banner(
+      "warning",
+      "Confirm your email",
+      `We sent a link to ${state.account.email}. Holding a seat needs a confirmed address.`,
+      { id: "verify" },
+    );
+  }
+
+  await go("events");
+}
+
+async function loadNotifications() {
+  try {
+    const body = await api("GET", "/notifications");
+    state.notifications = body.notifications;
+
+    if (body.unread > 0) await api("POST", "/notifications/read");
+  } catch {
+    // A deployment with nowhere to keep notices has no routes for them, which
+    // is not an error worth showing anybody.
+    state.notifications = [];
+  }
+}
+
+// Withdrawing leaves the event where the people holding tickets can still find
+// it. The sheet says what will happen rather than asking whether the person is
+// sure.
+function confirmCancelEvent(event) {
+  layer().append(
+    sheet({
+      title: `Withdraw ${event.name}?`,
+      text:
+        "It stays in the list, marked cancelled, so anyone holding a ticket can see what happened. " +
+        "No new seats can be taken, and everybody affected is told. This cannot be undone.",
+      confirmLabel: "Withdraw it",
+      async onConfirm() {
+        await api("POST", `/admin/events/${encodeURIComponent(event.id)}/cancel`);
+        await go("manage", {
+          flash: ["success", "Withdrawn", `${event.name} is no longer on sale. Everyone affected has been told.`],
+        });
+      },
+    }),
+  );
+}
+
+// Removing is for a mistake. The server refuses the moment a seat is spoken for,
+// and that refusal is the useful answer rather than an error.
+function confirmDeleteEvent(event) {
+  layer().append(
+    sheet({
+      title: `Delete ${event.name}?`,
+      text:
+        "This removes the event and its seats for good. It is refused if any seat is held or sold — " +
+        "withdraw it instead when people already have tickets.",
+      confirmLabel: "Delete it",
+      async onConfirm() {
+        try {
+          await api("DELETE", `/admin/events/${encodeURIComponent(event.id)}`);
+        } catch (err) {
+          if (err instanceof ApiError && err.code === "event_in_use") {
+            await go("manage");
+            banner(
+              "error",
+              "This event has tickets",
+              "Seats are held or sold, so it cannot be removed. Withdraw it instead.",
+            );
+
+            return;
+          }
+
+          throw err;
+        }
+
+        await go("manage", { flash: ["success", "Deleted", `${event.name} is gone.`] });
+      },
+    }),
+  );
+}
+
+function confirmSignOut() {
+  const scrim = el("div", "scrim");
+  const sheet = el("div", "sheet");
+
+  sheet.append(
+    el("div", "grab"),
+    el("h2", null, "Sign out of SeatHold?"),
+    el("p", null, "You'll be signed out on this device. Your other devices stay signed in."),
+  );
+
+  const actions = el("div", "actions");
+  const out = el("button", "btn btn-danger-solid", "Sign out");
+  const cancel = el("button", "btn btn-secondary", "Cancel");
+
+  out.addEventListener("click", signOut);
+  cancel.addEventListener("click", () => scrim.remove());
+  scrim.addEventListener("click", (event) => {
+    if (event.target === scrim) scrim.remove();
+  });
+
+  actions.append(out, cancel);
+  sheet.append(actions);
+  scrim.append(sheet);
+  document.body.append(scrim);
+}
+
+async function signOut() {
+  // The server is told first, while the token is still in hand. Dropping it here
+  // only stops this page from using it; the token stays good until somebody
+  // records that it should not be.
+  try {
+    await api("POST", "/auth/logout");
+  } catch (err) {
+    if (err instanceof ApiError && err.code !== "logout_unavailable") showError(err);
+  }
+
+  setToken(null);
+  state.account = null;
+  state.hold = null;
+  state.place = null;
+  state.notifications = [];
+  clearInterval(state.countdown);
+  state.stream?.close();
+  state.stream = null;
+
+  document.querySelector(".scrim")?.remove();
+  await go("auth");
+}
+
+// ---- push ----
+
+async function enablePush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+  let key;
+  try {
+    key = (await api("GET", "/push/key")).publicKey;
+  } catch {
+    // A deployment with no VAPID pair has no push routes at all.
+    return;
+  }
+
+  if (!key) return;
+
+  try {
+    const registration = await navigator.serviceWorker.register("/sw.js");
+
+    // The browser's own prompt. Refusing is a perfectly good answer that this
+    // must not nag about.
+    if ((await Notification.requestPermission()) !== "granted") return;
+
+    const subscription = await registration.pushManager.subscribe({
+      // Every push must be visible to the person. A silent one is how a push
+      // subscription becomes a tracking channel, and browsers refuse it.
+      userVisibleOnly: true,
+      applicationServerKey: key,
+    });
+
+    await api("POST", "/push/subscriptions", { body: subscription.toJSON() });
+    state.pushOn = true;
+  } catch {
+    // Permission refused, no service worker, an insecure origin: all the same
+    // to this page, which is that there will be no push.
+    state.pushOn = false;
+  }
+}
+
+// ---- boot ----
+
+async function start() {
+  // A verification link lands on /verify?token=… and the page spends it. A GET
+  // on the link itself would let a mailbox scanner spend it first.
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token");
+
+  if (location.pathname === "/verify" && token) {
+    history.replaceState(null, "", "/");
+
+    try {
+      await api("POST", "/auth/verify", { body: { token } });
+      banner("success", "Email confirmed", "You can hold seats now.");
+    } catch (err) {
+      if (err instanceof ApiError) showError(err);
     }
-  };
+  }
 
-  tick();
-  state.countdownTimer = setInterval(tick, 1000);
+  await go(hasToken() ? "events" : "auth");
 }
 
-// --- wiring -------------------------------------------------------------
-
-$("auth-form").addEventListener("submit", signIn);
-$("sign-up").addEventListener("click", signUp);
-$("sign-out").addEventListener("click", signOut);
-$("back").addEventListener("click", () => {
-  clearInterval(state.refreshTimer);
-  closeStream();
-  loadEvents();
-});
-$("confirm").addEventListener("click", confirmHold);
-$("release").addEventListener("click", releaseHold);
+start();

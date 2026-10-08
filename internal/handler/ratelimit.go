@@ -29,6 +29,28 @@ var (
 	DefaultPolicy = Policy{Name: "default", Every: time.Second, Burst: 30}
 )
 
+// Policies are the allowances in force. Passed in rather than read from the
+// package variables, so a deployment can be stricter than a laptop without a
+// code change.
+type Policies struct {
+	Auth    Policy
+	Default Policy
+}
+
+// DefaultPolicies returns the built in allowances.
+func DefaultPolicies() Policies {
+	return Policies{Auth: AuthPolicy, Default: DefaultPolicy}
+}
+
+// forRequest picks the allowance a request falls under.
+func (p Policies) forRequest(r *http.Request) Policy {
+	if strings.HasPrefix(r.URL.Path, "/auth/") {
+		return p.Auth
+	}
+
+	return p.Default
+}
+
 // visitorTTL is how long an idle bucket is kept. Without eviction the map grows
 // by one entry per address seen, for as long as the process runs.
 const visitorTTL = 10 * time.Minute
@@ -138,10 +160,10 @@ func (l *RateLimiter) Run(ctx context.Context, interval time.Duration, logger *s
 // It runs inside Authenticate so that a signed in caller is limited as itself
 // rather than as whatever address it happens to be behind, which matters when
 // several people share one office connection.
-func RateLimit(limiter *RateLimiter, logger *slog.Logger) Middleware {
+func RateLimit(limiter *RateLimiter, policies Policies, logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			policy := policyFor(r)
+			policy := policies.forRequest(r)
 			key := limitKey(r)
 
 			allowed, retryAfter := limiter.Allow(policy, key)
@@ -167,15 +189,6 @@ func RateLimit(limiter *RateLimiter, logger *slog.Logger) Middleware {
 			writeAPIError(w, r, logger, errTooManyRequests)
 		})
 	}
-}
-
-// policyFor picks the allowance a request falls under.
-func policyFor(r *http.Request) Policy {
-	if strings.HasPrefix(r.URL.Path, "/auth/") {
-		return AuthPolicy
-	}
-
-	return DefaultPolicy
 }
 
 // limitKey identifies the caller to limit.
